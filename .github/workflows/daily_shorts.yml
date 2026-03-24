@@ -40,13 +40,21 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      # ─── apt キャッシュ ──────────────────────
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-${{ runner.os }}-${{ hashFiles('.github/workflows/daily_shorts.yml') }}
+          restore-keys: apt-${{ runner.os }}-
+
       # ─── システム依存パッケージ ──────────────
       - name: Install system dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q \
+          sudo apt-get install -y -q --no-install-recommends \
             ffmpeg \
-            fonts-noto-cjk \
+            fonts-vlgothic \
             libsndfile1
 
       # ─── Python 依存パッケージ ────────────────
