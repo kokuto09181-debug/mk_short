@@ -40,22 +40,12 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      # ─── apt キャッシュ ──────────────────────
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: apt-${{ runner.os }}-${{ hashFiles('.github/workflows/daily_shorts.yml') }}
-          restore-keys: apt-${{ runner.os }}-
-
       # ─── システム依存パッケージ ──────────────
+      # ffmpeg / libsndfile1 は ubuntu-latest に pre-install 済み
+      # fonts-vlgothic のみ追加インストール（約5MB）
       - name: Install system dependencies
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends \
-            ffmpeg \
-            fonts-vlgothic \
-            libsndfile1
+          sudo apt-get install -y -q --no-install-recommends fonts-vlgothic
 
       # ─── Python 依存パッケージ ────────────────
       - name: Install Python dependencies
