@@ -6,6 +6,7 @@ MoviePy + Pillow で YouTube Shorts (1080x1920, 9:16) 動画を生成する
 import logging
 import os
 import random
+import re
 import textwrap
 from pathlib import Path
 from typing import Optional
@@ -143,6 +144,37 @@ class VideoCreator:
                 lines.append(current_line)
         return lines
 
+    def _split_sentences(self, text: str, language: str = "ja") -> list[str]:
+        """ナレーションを文単位に分割する"""
+        if language == "ja":
+            parts = re.split(r'(?<=[。！？])', text)
+        else:
+            parts = re.split(r'(?<=[.!?])\s+', text)
+        return [p.strip() for p in parts if p.strip()]
+
+    def _make_subtitle_func(self, sentences: list[str], total_duration: float):
+        """時刻 t を受け取り、その時点の字幕テキストを返すクロージャを生成する"""
+        if not sentences:
+            return lambda t: ""
+        total_chars = sum(len(s) for s in sentences)
+        if total_chars == 0:
+            return lambda t: ""
+        # 各文の開始秒を文字数比で推定
+        starts = []
+        cumulative = 0
+        for s in sentences:
+            starts.append(cumulative / total_chars * total_duration)
+            cumulative += len(s)
+
+        def get_subtitle(t: float) -> str:
+            current = sentences[0]
+            for i, start in enumerate(starts):
+                if t >= start:
+                    current = sentences[i]
+            return current
+
+        return get_subtitle
+
     def create_frame(
         self,
         script: dict,
@@ -150,6 +182,7 @@ class VideoCreator:
         bg_image_path: Optional[str],
         theme: dict,
         progress: float = 0.0,
+        subtitle_text: str = "",
     ) -> np.ndarray:
         """1フレーム（PIL Image -> numpy array）を生成する"""
         img = self._create_background_frame(bg_image_path, theme)
@@ -245,6 +278,27 @@ class VideoCreator:
                 bbox = cta_font.getbbox(line)
                 cta_y += bbox[3] - bbox[1] + 10
 
+        # --- 字幕（下部固定エリア）
+        if subtitle_text:
+            sub_font = self._get_font(self.video_config.get("font_size_subtitle", 42))
+            sub_lines = self._wrap_text(subtitle_text, sub_font, content_width - 20)[:3]
+            if sub_lines:
+                line_h = sub_font.getbbox("あ")[3] + 10
+                area_h = len(sub_lines) * line_h + 24
+                sub_top = self.height - 320 - area_h
+                # 半透明背景
+                draw.rectangle(
+                    [(padding - 20, sub_top - 8),
+                     (self.width - padding + 20, sub_top + area_h)],
+                    fill=(0, 0, 0, 170),
+                )
+                sy = sub_top
+                for line in sub_lines:
+                    self._draw_text_with_shadow(
+                        draw, line, (padding, sy), sub_font, (255, 255, 255), shadow_offset=2
+                    )
+                    sy += line_h
+
         # --- プログレスバー
         bar_y = self.height - 12
         draw.rectangle([(0, bar_y), (self.width, self.height)], fill=(30, 30, 30, 255))
@@ -261,6 +315,7 @@ class VideoCreator:
         audio_path: str,
         image_paths: list[str],
         output_path: str,
+        narration: str = "",
     ) -> str:
         """動画を生成して output_path に保存する"""
         from moviepy.editor import (
@@ -278,6 +333,11 @@ class VideoCreator:
         audio_clip = AudioFileClip(audio_path)
         total_duration = audio_clip.duration
 
+        # 字幕タイミング関数を準備
+        language = script.get("language", "ja")
+        sentences = self._split_sentences(narration, language) if narration else []
+        get_subtitle = self._make_subtitle_func(sentences, total_duration)
+
         sections = script.get("sections", [])
         num_sections = max(len(sections), 1)
 
@@ -287,13 +347,13 @@ class VideoCreator:
 
         for i in range(num_sections):
             start_t = i * section_duration
-            end_t = (i + 1) * section_duration
             bg_image = image_paths[i % len(image_paths)] if image_paths else None
 
-            def make_frame(t, idx=i, bg=bg_image):
-                global_t = start_t + t
+            def make_frame(t, idx=i, bg=bg_image, s_start=start_t):
+                global_t = s_start + t
                 progress = global_t / total_duration
-                return self.create_frame(script, idx, bg, theme, progress)
+                subtitle = get_subtitle(global_t)
+                return self.create_frame(script, idx, bg, theme, progress, subtitle)
 
             clip = ImageClip(
                 make_frame=make_frame,

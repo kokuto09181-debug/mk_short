@@ -40,6 +40,7 @@ video:
   font_size_body: 50
   font_size_small: 36
   font_size_name: 90       # 偉人の名前を大きく表示
+  font_size_subtitle: 42   # 字幕テキスト
 
   themes:
     - name: "samurai_dark"

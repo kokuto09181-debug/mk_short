@@ -24,6 +24,9 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # src モジュールのパスを通す
 sys.path.insert(0, str(Path(__file__).parent))
@@ -122,6 +125,9 @@ class Pipeline:
         n = videos_per_day or self.config["content"]["videos_per_day"]
         logger.info(f"=== パイプライン開始: {n}本 × 日英2チャンネル ===")
 
+        # 中断等でproducingのまま残ったものをリセット
+        self.notion.reset_stale_producing()
+
         # 偉人のストックを確認・補充
         self._ensure_figure_stock(needed=n)
 
@@ -158,10 +164,17 @@ class Pipeline:
             # 1. 脚本生成（日英）
             script_ja, script_en = self.generator.generate_both_languages(figure)
 
-            # 2. 背景画像取得
-            keywords = script_ja.get("search_keywords_en", ["Japan", "history"])
+            # 2. 背景画像取得 - まずWikipediaで偉人の実際の画像を取得
             img_dir = os.path.join(work_dir, "images")
-            image_paths = self.image_fetcher.fetch_images(keywords, img_dir, count=6)
+            image_paths = self.image_fetcher.fetch_wikipedia_images(
+                figure["name_ja"], figure["name_en"], img_dir
+            )
+            # 不足分をPexelsのキーワード検索で補完
+            if len(image_paths) < 4:
+                keywords = script_ja.get("search_keywords_en", ["Japan", "history"])
+                need = max(3, 6 - len(image_paths))
+                pexels_paths = self.image_fetcher.fetch_images(keywords, img_dir, count=need)
+                image_paths.extend(pexels_paths)
             if not image_paths:
                 logger.warning("画像取得失敗。デフォルトキーワードで再試行")
                 image_paths = self.image_fetcher.fetch_images(
@@ -227,9 +240,10 @@ class Pipeline:
 
         # TTS
         narration = self.generator.build_narration(script)
+        tts_lang_key = "japanese" if language == "ja" else "english"
         tts_gen = TTSGenerator()
-        tts_gen.tts_config = self.config["tts"][language]
-        tts_gen.provider = self.config["tts"][language].get("provider", "edge_tts")
+        tts_gen.tts_config = self.config["tts"][tts_lang_key]
+        tts_gen.provider = self.config["tts"][tts_lang_key].get("provider", "edge_tts")
 
         audio_path, duration = tts_gen.generate_with_speed(narration, work_dir)
         logger.info(f"[{lang_label}] 音声: {duration:.1f}秒")
@@ -241,6 +255,7 @@ class Pipeline:
             audio_path=audio_path,
             image_paths=image_paths,
             output_path=video_path,
+            narration=narration,
         )
 
         # サムネイル
