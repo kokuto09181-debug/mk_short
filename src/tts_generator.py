@@ -46,7 +46,7 @@ class TTSGenerator:
     def _generate_edge_tts(self, text: str, output_path: str) -> str:
         import edge_tts
 
-        voice = self.tts_config.get("edge_voice", "ja-JP-NanamiNeural")
+        voice = self.tts_config.get("voice", "ja-JP-NanamiNeural")
         logger.info(f"edge-tts で音声生成: voice={voice}, {len(text)} 文字")
 
         async def _run():
