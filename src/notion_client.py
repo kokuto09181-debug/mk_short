@@ -91,14 +91,32 @@ class NotionFigureClient:
         return results
 
     def get_pending_figures(self, limit: int = 10) -> list[dict]:
-        """status=pending の偉人を取得する"""
+        """status=pending または error の偉人を取得する（error は再試行）"""
         data = self.query_figures({
-            "property": "status",
-            "select": {"equals": "pending"},
+            "or": [
+                {"property": "status", "select": {"equals": "pending"}},
+                {"property": "status", "select": {"equals": "error"}},
+            ]
         })
         figures = [self._page_to_figure(p) for p in data]
-        logger.info(f"pending 偉人: {len(figures)} 件")
-        return figures[:limit]
+        pending = [f for f in figures if f["status"] == "pending"]
+        errors  = [f for f in figures if f["status"] == "error"]
+        logger.info(f"取得: pending={len(pending)}件, error={len(errors)}件（再試行）")
+        # pending を優先し、不足分を error で補う
+        return (pending + errors)[:limit]
+
+    def reset_stale_producing(self):
+        """中断等でproducingのまま残った偉人をpendingに戻す"""
+        data = self.query_figures({
+            "property": "status",
+            "select": {"equals": "producing"},
+        })
+        for page in data:
+            self._patch(f"pages/{page['id']}", {
+                "properties": {"status": {"select": {"name": "pending"}}}
+            })
+        if data:
+            logger.info(f"{len(data)}件のproducing状態をpendingにリセット")
 
     def get_all_names_ja(self) -> list[str]:
         """重複チェック用：DB 内の全日本語名リストを返す"""
