@@ -228,8 +228,9 @@ class Pipeline:
         # TTS
         narration = self.generator.build_narration(script)
         tts_gen = TTSGenerator()
-        tts_gen.tts_config = self.config["tts"][language]
-        tts_gen.provider = self.config["tts"][language].get("provider", "edge_tts")
+        lang_key = "japanese" if language == "ja" else "english"
+        tts_gen.tts_config = self.config["tts"][lang_key]
+        tts_gen.provider = self.config["tts"][lang_key].get("provider", "edge_tts")
 
         audio_path, duration = tts_gen.generate_with_speed(narration, work_dir)
         logger.info(f"[{lang_label}] 音声: {duration:.1f}秒")
