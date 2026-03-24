@@ -266,8 +266,7 @@ class VideoCreator:
         from moviepy.editor import (
             AudioFileClip,
             CompositeVideoClip,
-            ImageClip,
-            VideoFileClip,
+            VideoClip,
             concatenate_videoclips,
         )
 
@@ -295,10 +294,9 @@ class VideoCreator:
                 progress = global_t / total_duration
                 return self.create_frame(script, idx, bg, theme, progress)
 
-            clip = ImageClip(
+            clip = VideoClip(
                 make_frame=make_frame,
                 duration=section_duration,
-                ismask=False,
             )
             clips.append(clip)
 
