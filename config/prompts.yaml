@@ -12,7 +12,7 @@ script_ja:
     - 冒頭3秒で視聴者を引き込む強烈なフックを入れる（衝撃の事実・逆説・疑問形）
     - 具体的な数字・年号・エピソードを使う
     - 最後に「フォロー」「いいね」を促すCTAを入れる
-    - 読み上げ時間が30〜50秒になるよう調整する
+    - hook＋sections全本文＋CTAの合計を250文字以内に厳守する（超えると動画が長くなりすぎる）
     - 必ずJSONのみ出力する（コードブロック不要）
 
   user: |
@@ -54,7 +54,7 @@ script_en:
     - Open with a powerful hook in the first 3 seconds (shocking fact, paradox, or question)
     - Use specific numbers, dates, and vivid anecdotes
     - End with a CTA encouraging follow/like
-    - Target 30-50 seconds when read aloud
+    - Total narration (hook + all sections + CTA) must be under 180 words — strictly enforced
     - Output JSON only (no code blocks)
 
   user: |

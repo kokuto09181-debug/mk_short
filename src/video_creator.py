@@ -321,8 +321,7 @@ class VideoCreator:
         from moviepy.editor import (
             AudioFileClip,
             CompositeVideoClip,
-            ImageClip,
-            VideoFileClip,
+            VideoClip,
             concatenate_videoclips,
         )
 
@@ -355,10 +354,9 @@ class VideoCreator:
                 subtitle = get_subtitle(global_t)
                 return self.create_frame(script, idx, bg, theme, progress, subtitle)
 
-            clip = ImageClip(
+            clip = VideoClip(
                 make_frame=make_frame,
                 duration=section_duration,
-                ismask=False,
             )
             clips.append(clip)
 
