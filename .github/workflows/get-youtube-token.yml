@@ -41,7 +41,12 @@ jobs:
           client_id = client_info[key]["client_id"]
           client_secret = client_info[key]["client_secret"]
 
-          SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube"
+          SCOPES = " ".join([
+              "https://www.googleapis.com/auth/youtube",
+              "https://www.googleapis.com/auth/youtube.force-ssl",
+              "https://www.googleapis.com/auth/youtubepartner",
+              "https://www.googleapis.com/auth/youtubepartner-channel-audit",
+          ])
 
           # Step 1: デバイスコードを取得
           resp = requests.post(
