@@ -1,0 +1,322 @@
+"""
+メインパイプライン
+1日3本 × 日英2チャンネル = 6動画を自動生成・投稿する
+
+実行フロー:
+  1. Notionから未制作の偉人を取得
+  2. 偉人が不足していれば Claude に追加生成させる
+  3. 偉人ごとに日本語・英語の脚本を生成
+  4. TTS音声合成
+  5. Pexels から背景画像取得
+  6. MoviePy で動画組み立て
+  7. YouTube にアップロード（日英チャンネル）
+  8. Notion に制作完了を記録
+"""
+
+import json
+import logging
+import os
+import shutil
+import sys
+import tempfile
+import traceback
+from pathlib import Path
+from typing import Optional
+
+import yaml
+
+# src モジュールのパスを通す
+sys.path.insert(0, str(Path(__file__).parent))
+
+from content_generator import ContentGenerator
+from image_fetcher import ImageFetcher
+from notion_client import NotionFigureClient
+from tts_generator import TTSGenerator
+from uploader import YouTubeUploader
+from video_creator import VideoCreator
+
+logger = logging.getLogger(__name__)
+
+CONFIG_DIR = Path(__file__).parent.parent / "config"
+DATA_DIR = Path(__file__).parent.parent / "data"
+
+FIELDS = [
+    "科学者・発明家",
+    "女性の先駆者",
+    "芸術家・文化人",
+    "医師・思想家",
+    "地方の英雄・反骨者",
+    "外交官・先駆的外国人",
+]
+
+
+def load_config() -> dict:
+    with open(CONFIG_DIR / "settings.yaml", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+class Pipeline:
+    def __init__(self, dry_run: bool = False):
+        """
+        dry_run=True の場合、動画生成まで行うがYouTubeへのアップロードは行わない
+        """
+        self.config = load_config()
+        self.dry_run = dry_run
+        self.notion = NotionFigureClient()
+        self.generator = ContentGenerator()
+        self.tts = TTSGenerator()
+        self.image_fetcher = ImageFetcher()
+        self.video_creator = VideoCreator()
+        self.uploader_jp = YouTubeUploader(channel="japanese")
+        self.uploader_en = YouTubeUploader(channel="english")
+
+    # ─────────────────────────────────────────
+    # メイン実行
+    # ─────────────────────────────────────────
+
+    def run_daily(self, videos_per_day: Optional[int] = None):
+        """1日分の動画を生成・投稿する"""
+        n = videos_per_day or self.config["content"]["videos_per_day"]
+        logger.info(f"=== パイプライン開始: {n}本 × 日英2チャンネル ===")
+
+        # 偉人のストックを確認・補充
+        self._ensure_figure_stock(needed=n)
+
+        # 未制作の偉人を取得
+        figures = self.notion.get_pending_figures(limit=n)
+        if not figures:
+            logger.error("pending の偉人が見つかりません。シードデータを登録してください。")
+            return
+
+        results = []
+        for figure in figures:
+            result = self._process_figure(figure)
+            results.append(result)
+
+        # サマリー
+        success = sum(1 for r in results if r["success"])
+        logger.info(f"=== 完了: {success}/{len(results)} 本成功 ===")
+        return results
+
+    # ─────────────────────────────────────────
+    # 1偉人分の処理
+    # ─────────────────────────────────────────
+
+    def _process_figure(self, figure: dict) -> dict:
+        page_id = figure["page_id"]
+        name_ja = figure["name_ja"]
+        logger.info(f"--- 処理開始: {name_ja} ---")
+
+        # 制作中フラグ
+        self.notion.mark_producing(page_id)
+
+        work_dir = tempfile.mkdtemp(prefix=f"shorts_{name_ja[:8]}_")
+        try:
+            # 1. 脚本生成（日英）
+            script_ja, script_en = self.generator.generate_both_languages(figure)
+
+            # 2. 背景画像取得
+            keywords = script_ja.get("search_keywords_en", ["Japan", "history"])
+            img_dir = os.path.join(work_dir, "images")
+            image_paths = self.image_fetcher.fetch_images(keywords, img_dir, count=6)
+            if not image_paths:
+                logger.warning("画像取得失敗。デフォルトキーワードで再試行")
+                image_paths = self.image_fetcher.fetch_images(
+                    ["ancient Japan", "traditional"], img_dir, count=3
+                )
+
+            # 3. 日本語動画生成
+            jp_video_id = self._produce_and_upload(
+                script=script_ja,
+                figure=figure,
+                image_paths=image_paths,
+                work_dir=os.path.join(work_dir, "ja"),
+                language="ja",
+            )
+
+            # 4. 英語動画生成
+            en_video_id = self._produce_and_upload(
+                script=script_en,
+                figure=figure,
+                image_paths=image_paths,
+                work_dir=os.path.join(work_dir, "en"),
+                language="en",
+            )
+
+            # 5. Notion に完了記録
+            self.notion.mark_done(
+                page_id=page_id,
+                title_ja=script_ja.get("title", ""),
+                title_en=script_en.get("title", ""),
+                jp_video_id=jp_video_id,
+                en_video_id=en_video_id,
+            )
+
+            logger.info(f"完了: {name_ja} | JP={jp_video_id} | EN={en_video_id}")
+            return {
+                "success": True,
+                "name_ja": name_ja,
+                "jp_video_id": jp_video_id,
+                "en_video_id": en_video_id,
+            }
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            logger.error(f"エラー: {name_ja}\n{tb}")
+            self.notion.mark_error(page_id, str(e)[:500])
+            return {"success": False, "name_ja": name_ja, "error": str(e)}
+
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    def _produce_and_upload(
+        self,
+        script: dict,
+        figure: dict,
+        image_paths: list[str],
+        work_dir: str,
+        language: str,
+    ) -> str:
+        """TTS → 動画生成 → YouTube アップロード。video_id を返す"""
+        os.makedirs(work_dir, exist_ok=True)
+        lang_label = "日本語" if language == "ja" else "英語"
+        logger.info(f"[{lang_label}] 動画制作開始")
+
+        # TTS
+        narration = self.generator.build_narration(script)
+        tts_gen = TTSGenerator()
+        tts_gen.tts_config = self.config["tts"][language]
+        tts_gen.provider = self.config["tts"][language].get("provider", "edge_tts")
+
+        audio_path, duration = tts_gen.generate_with_speed(narration, work_dir)
+        logger.info(f"[{lang_label}] 音声: {duration:.1f}秒")
+
+        # 動画生成
+        video_path = os.path.join(work_dir, "output.mp4")
+        self.video_creator.create_video(
+            script=script,
+            audio_path=audio_path,
+            image_paths=image_paths,
+            output_path=video_path,
+        )
+
+        # サムネイル
+        thumb_path = os.path.join(work_dir, "thumbnail.jpg")
+        self.video_creator.create_thumbnail(script, thumb_path)
+
+        if self.dry_run:
+            logger.info(f"[DRY RUN] アップロードスキップ: {video_path}")
+            return "dry_run"
+
+        # YouTube アップロード
+        uploader = self.uploader_jp if language == "ja" else self.uploader_en
+        description = self.generator.build_description(script)
+
+        video_id = uploader.upload(
+            video_path=video_path,
+            title=script["title"],
+            description=description,
+            thumbnail_path=thumb_path,
+        )
+
+        return video_id
+
+    # ─────────────────────────────────────────
+    # Notion ストック管理
+    # ─────────────────────────────────────────
+
+    def _ensure_figure_stock(self, needed: int, min_stock: int = 15):
+        """pending が min_stock を下回ったら Claude に補充を依頼する"""
+        pending = self.notion.get_pending_figures(limit=100)
+        stock = len(pending)
+        logger.info(f"偉人ストック: {stock} 件 pending")
+
+        if stock >= min_stock:
+            return
+
+        logger.info(f"ストック不足（{stock}件）。Claudeに補充依頼...")
+        existing = self.notion.get_all_names_ja()
+        import random
+        field = random.choice(FIELDS)
+
+        new_figures = self.generator.generate_new_figures(
+            field=field,
+            era_range="飛鳥時代〜昭和",
+            existing_names=existing,
+            count=15,
+        )
+        added = self.notion.add_figures(new_figures)
+        logger.info(f"偉人 {len(added)} 件を Notion に追加")
+
+    # ─────────────────────────────────────────
+    # 初期セットアップ
+    # ─────────────────────────────────────────
+
+    def seed_notion(self):
+        """data/figures_seed.json を Notion DB に一括投入する"""
+        seed_path = DATA_DIR / "figures_seed.json"
+        with open(seed_path, encoding="utf-8") as f:
+            figures = json.load(f)
+
+        existing = self.notion.get_all_names_ja()
+        new_figures = [f for f in figures if f["name_ja"] not in existing]
+
+        if not new_figures:
+            logger.info("シードデータはすでに全件登録済みです")
+            return
+
+        added = self.notion.add_figures(new_figures)
+        logger.info(f"シード投入完了: {len(added)} 件")
+
+    def setup_notion_db(self, parent_page_id: str):
+        """Notion DB を初期作成する（初回のみ）"""
+        db_id = self.notion.setup_database(parent_page_id)
+        print(f"\nNotion DB 作成完了!")
+        print(f"以下の値を GitHub Secret に設定してください:")
+        print(f"  NOTION_DATABASE_ID = {db_id}")
+        return db_id
+
+
+# ─────────────────────────────────────────────
+# CLI エントリポイント
+# ─────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    parser = argparse.ArgumentParser(description="YouTube Shorts 自動運営パイプライン")
+    subparsers = parser.add_subparsers(dest="command")
+
+    # run: 通常実行
+    run_parser = subparsers.add_parser("run", help="動画を生成してアップロード")
+    run_parser.add_argument("--dry-run", action="store_true", help="アップロードをスキップ")
+    run_parser.add_argument("--count", type=int, help="生成本数（デフォルト: 設定値）")
+
+    # seed: Notionにシードデータ投入
+    seed_parser = subparsers.add_parser("seed", help="Notionに偉人シードデータを投入")
+
+    # setup-db: NotionDB初期作成
+    setup_parser = subparsers.add_parser("setup-db", help="Notion DBを新規作成")
+    setup_parser.add_argument("parent_page_id", help="Notionの親ページID")
+
+    args = parser.parse_args()
+
+    if args.command == "run":
+        pipeline = Pipeline(dry_run=args.dry_run)
+        pipeline.run_daily(videos_per_day=args.count)
+
+    elif args.command == "seed":
+        pipeline = Pipeline(dry_run=True)
+        pipeline.seed_notion()
+
+    elif args.command == "setup-db":
+        pipeline = Pipeline(dry_run=True)
+        pipeline.setup_notion_db(args.parent_page_id)
+
+    else:
+        parser.print_help()

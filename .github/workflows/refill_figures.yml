@@ -1,0 +1,63 @@
+name: Refill Figure Stock
+
+on:
+  # 毎週月曜 9:00 JST（UTC 0:00）にストック確認・補充
+  schedule:
+    - cron: "0 0 * * 1"
+
+  workflow_dispatch:
+
+jobs:
+  refill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check and refill figure stock
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          python - <<'EOF'
+          import logging, sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path("src")))
+          logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+          from pipeline import Pipeline, FIELDS
+          import random
+
+          pipeline = Pipeline(dry_run=True)
+          notion = pipeline.notion
+          generator = pipeline.generator
+
+          pending = notion.get_pending_figures(limit=100)
+          print(f"現在の pending ストック: {len(pending)} 件")
+
+          if len(pending) < 30:
+              existing = notion.get_all_names_ja()
+              for field in FIELDS:
+                  new_figs = generator.generate_new_figures(
+                      field=field,
+                      era_range="飛鳥時代〜昭和",
+                      existing_names=existing,
+                      count=8,
+                  )
+                  added = notion.add_figures(new_figs)
+                  existing.extend([f["name_ja"] for f in new_figs])
+                  print(f"{field}: {len(added)} 件追加")
+          else:
+              print("ストック十分。補充不要。")
+          EOF

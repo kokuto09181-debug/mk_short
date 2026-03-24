@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# 環境変数・シークレット
+.env
+*.token.json
+.youtube_token*.json
+
+# 一時ファイル
+/tmp/
+*.mp4
+*.mp3
+*.wav
+work_*/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

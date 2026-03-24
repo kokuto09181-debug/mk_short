@@ -1,0 +1,83 @@
+name: Daily Shorts Generation
+
+on:
+  # 毎日3回投稿（UTC = JST-9）
+  schedule:
+    - cron: "0 22 * * *"   # JST 07:00
+    - cron: "0 3 * * *"    # JST 12:00
+    - cron: "0 11 * * *"   # JST 20:00
+
+  # 手動トリガー（テスト用）
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run（アップロードしない）"
+        type: boolean
+        default: false
+      count:
+        description: "生成本数（空白=設定値の3本）"
+        type: string
+        default: ""
+
+env:
+  PYTHONUNBUFFERED: "1"
+  TZ: "Asia/Tokyo"
+
+jobs:
+  generate-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90   # 3本で約60〜80分
+
+    steps:
+      # ─── チェックアウト ───────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ─── Python セットアップ ──────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ─── システム依存パッケージ ──────────────
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q \
+            ffmpeg \
+            fonts-noto-cjk \
+            libsndfile1
+
+      # ─── Python 依存パッケージ ────────────────
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ─── 動画生成・アップロード ───────────────
+      - name: Generate and upload Shorts
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          YOUTUBE_TOKEN_JSON_JP: ${{ secrets.YOUTUBE_TOKEN_JSON_JP }}
+          YOUTUBE_TOKEN_JSON_EN: ${{ secrets.YOUTUBE_TOKEN_JSON_EN }}
+        run: |
+          DRY_RUN_FLAG=""
+          COUNT_FLAG=""
+
+          # 手動トリガーの入力を反映
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          if [ -n "${{ github.event.inputs.count }}" ]; then
+            COUNT_FLAG="--count ${{ github.event.inputs.count }}"
+          fi
+
+          python src/pipeline.py run $DRY_RUN_FLAG $COUNT_FLAG
+
+      # ─── 失敗通知（オプション）──────────────
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::動画生成パイプラインが失敗しました。ログを確認してください。"
