@@ -166,9 +166,13 @@ class Pipeline:
 
             # 2. 背景画像取得 - まずWikipediaで偉人の実際の画像を取得
             img_dir = os.path.join(work_dir, "images")
-            image_paths = self.image_fetcher.fetch_wikipedia_images(
+            wiki_paths = self.image_fetcher.fetch_wikipedia_images(
                 figure["name_ja"], figure["name_en"], img_dir
             )
+            # 先頭のWikipedia画像を顔写真（ポートレート）として使用
+            portrait_path = wiki_paths[0] if wiki_paths else None
+            image_paths = list(wiki_paths)
+
             # 不足分をPexelsのキーワード検索で補完
             if len(image_paths) < 4:
                 keywords = script_ja.get("search_keywords_en", ["Japan", "history"])
@@ -186,6 +190,7 @@ class Pipeline:
                 script=script_ja,
                 figure=figure,
                 image_paths=image_paths,
+                portrait_path=portrait_path,
                 work_dir=os.path.join(work_dir, "ja"),
                 language="ja",
             )
@@ -195,6 +200,7 @@ class Pipeline:
                 script=script_en,
                 figure=figure,
                 image_paths=image_paths,
+                portrait_path=portrait_path,
                 work_dir=os.path.join(work_dir, "en"),
                 language="en",
             )
@@ -232,13 +238,14 @@ class Pipeline:
         image_paths: list[str],
         work_dir: str,
         language: str,
+        portrait_path: Optional[str] = None,
     ) -> str:
         """TTS → 動画生成 → YouTube アップロード。video_id を返す"""
         os.makedirs(work_dir, exist_ok=True)
         lang_label = "日本語" if language == "ja" else "英語"
         logger.info(f"[{lang_label}] 動画制作開始")
 
-        # TTS
+        # TTS（OpenAI TTS 優先、なければ edge-tts）
         narration = self.generator.build_narration(script)
         tts_lang_key = "japanese" if language == "ja" else "english"
         tts_gen = TTSGenerator()
@@ -246,9 +253,9 @@ class Pipeline:
         tts_gen.provider = self.config["tts"][tts_lang_key].get("provider", "edge_tts")
 
         audio_path, duration = tts_gen.generate_with_speed(narration, work_dir)
-        logger.info(f"[{lang_label}] 音声: {duration:.1f}秒")
+        logger.info(f"[{lang_label}] 音声（BGM込み）: {duration:.1f}秒")
 
-        # 動画生成
+        # 動画生成（顔写真レイアウト + 字幕 + テキストアニメ）
         video_path = os.path.join(work_dir, "output.mp4")
         self.video_creator.create_video(
             script=script,
@@ -256,6 +263,7 @@ class Pipeline:
             image_paths=image_paths,
             output_path=video_path,
             narration=narration,
+            portrait_path=portrait_path,
         )
 
         # サムネイル

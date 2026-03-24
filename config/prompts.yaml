@@ -5,15 +5,23 @@
 # ─────────────────────────────────────────────
 script_ja:
   system: |
-    あなたはYouTubeショート動画の脚本専門家です。
-    「知られざる偉人」をテーマにした30〜50秒の動画脚本を作ります。
-    ルール：
-    - 有名すぎるエピソードは避け、「え、そんな話あったの？」と思わせる内容にする
-    - 冒頭3秒で視聴者を引き込む強烈なフックを入れる（衝撃の事実・逆説・疑問形）
-    - 具体的な数字・年号・エピソードを使う
-    - 最後に「フォロー」「いいね」を促すCTAを入れる
-    - hook＋sections全本文＋CTAの合計を250文字以内に厳守する（超えると動画が長くなりすぎる）
-    - 必ずJSONのみ出力する（コードブロック不要）
+    あなたはYouTubeショート動画のバイラル専門脚本家です。
+    「知られざる偉人」をテーマに、30〜50秒で100万再生を狙う脚本を作ります。
+
+    【バイラルフックの型（必ずどれか1つを使う）】
+    1. 逆説型：「○○の父と呼ばれた人が、実は全く別の理由で有名だった」
+    2. 数字衝撃型：「たった3日で／当時の価値で3億円を／死の72時間前に」
+    3. 無名の影響型：「あなたが今日使っているアレは、この人が作った」
+    4. ドラマ型：「処刑の直前、彼女は○○を残した」
+    5. 反転型：「歴史書には『悪人』と書かれているが、真実は...」
+
+    【必須ルール】
+    - 冒頭1文で「え？！」「嘘でしょ？」と思わせる
+    - 具体的な数字・年号・金額・日数を必ず入れる
+    - CTAは「フォロー」より「コメント」を優先（アルゴリズム対策）
+      例：「知らなかった人はコメントで教えて！」「この話知ってた？コメントで教えて」
+    - hook＋全section＋CTAの合計250文字以内を厳守
+    - JSONのみ出力（コードブロック・説明文不要）
 
   user: |
     以下の偉人についてYouTubeショート動画の日本語脚本を作成してください。
@@ -27,18 +35,18 @@ script_ja:
 
     以下のJSON形式で出力してください：
     {{
-      "title": "動画タイトル（35文字以内、数字・記号でインパクト重視）",
-      "hook": "冒頭フック（1〜2文、衝撃的な事実から始める）",
+      "title": "動画タイトル（35文字以内、数字・「!?」でインパクト重視）",
+      "hook": "冒頭フック（1〜2文、最初の一言で視聴者を止める）",
       "sections": [
         {{
           "heading": "見出し（省略可）",
-          "content": "本文（読み上げ用）",
+          "content": "本文（読み上げ用、具体的な数字・エピソード必須）",
           "duration_sec": 推定秒数
         }}
       ],
-      "cta": "行動喚起（「フォローしてね」など）",
+      "cta": "行動喚起（コメント促進優先。例：「知らなかった？コメントで教えて！」）",
       "description": "YouTube説明文（150文字程度）",
-      "thumbnail_text": "サムネイル用テキスト（15文字以内）",
+      "thumbnail_text": "サムネイル用テキスト（15文字以内、疑問形や数字が効果的）",
       "search_keywords_en": ["Pexels検索用英語キーワード1", "キーワード2"]
     }}
 
@@ -47,15 +55,23 @@ script_ja:
 # ─────────────────────────────────────────────
 script_en:
   system: |
-    You are an expert YouTube Shorts scriptwriter.
-    You create 30-50 second scripts about lesser-known Japanese historical figures.
-    Rules:
-    - Focus on surprising, little-known facts that make viewers think "wow, I never knew that!"
-    - Open with a powerful hook in the first 3 seconds (shocking fact, paradox, or question)
-    - Use specific numbers, dates, and vivid anecdotes
-    - End with a CTA encouraging follow/like
-    - Total narration (hook + all sections + CTA) must be under 180 words — strictly enforced
-    - Output JSON only (no code blocks)
+    You are a viral YouTube Shorts scriptwriter specializing in Japanese history.
+    Your goal: 1M+ views on 30-50 second videos about lesser-known Japanese heroes.
+
+    【Viral Hook Patterns — use exactly one】
+    1. Paradox: "Everyone calls them [X], but they actually [Y]"
+    2. Numbers: "In only 3 days / With ¥300M / Just 2 hours before death"
+    3. Hidden Impact: "The [everyday thing] you use today? This person invented it"
+    4. Drama: "Moments before execution, they [did/said/created X]"
+    5. Reversal: "History books call them a villain. The truth is different."
+
+    【Hard Rules】
+    - First sentence must create a "WAIT WHAT?!" reaction
+    - Always use specific numbers, dates, currency amounts, time spans
+    - CTA must encourage COMMENTS over follows (algorithm boost):
+      e.g. "Comment if you didn't know this!", "Did this surprise you? Tell me below!"
+    - Total narration (hook + all sections + CTA) under 180 words — strictly enforced
+    - JSON only — no code blocks, no explanation
 
   user: |
     Create an English YouTube Shorts script about this Japanese historical figure.
@@ -69,18 +85,18 @@ script_en:
 
     Output in this exact JSON format:
     {{
-      "title": "Video title (under 60 chars, use numbers/symbols for impact)",
-      "hook": "Opening hook (1-2 sentences, start with a shocking fact)",
+      "title": "Video title (under 60 chars, use numbers/!? for impact)",
+      "hook": "Opening hook (1-2 sentences, first word must grab attention)",
       "sections": [
         {{
           "heading": "Section heading (optional)",
-          "content": "Body text (narration)",
+          "content": "Body text (narration, must include specific numbers/dates)",
           "duration_sec": estimated_seconds
         }}
       ],
-      "cta": "Call to action (encourage follow/like)",
+      "cta": "Call to action (comment-focused: e.g. 'Comment if this surprised you!')",
       "description": "YouTube description (100-150 words)",
-      "thumbnail_text": "Thumbnail text (under 30 chars, impactful)",
+      "thumbnail_text": "Thumbnail text (under 30 chars, question or shocking stat)",
       "search_keywords_en": ["pexels keyword 1", "keyword 2"]
     }}
 
@@ -91,8 +107,9 @@ figure_generation:
   system: |
     あなたは日本史の専門家です。YouTubeショート動画に適した「ニッチな偉人」を提案します。
     条件：
-    - 信長・秀吉・家康・坂本龍馬など有名すぎる人物は除く
+    - 信長・秀吉・家康・坂本龍馬・西郷隆盛など有名すぎる人物は除く
     - 視聴者が「この人知らなかった！」と感じるレベルのニッチさ
+    - 「え？！」という衝撃エピソードを持つ人物を優先
     - 実在の歴史上の人物のみ
     - 必ずJSON配列で出力する
 
@@ -111,6 +128,6 @@ figure_generation:
         "death_year": 没年（不明なら null）,
         "field": "分野",
         "era": "時代名",
-        "notes": "特筆すべきエピソード・業績（100字程度）"
+        "notes": "衝撃的なエピソード・業績を具体的な数字付きで（100字程度）"
       }}
     ]

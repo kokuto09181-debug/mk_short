@@ -57,6 +57,7 @@ jobs:
       - name: Generate and upload Shorts
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}

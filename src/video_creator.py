@@ -1,6 +1,11 @@
 """
 動画生成モジュール
 MoviePy + Pillow で YouTube Shorts (1080x1920, 9:16) 動画を生成する
+
+レイアウト:
+  上部 42% : Wikipedia 顔写真（ポートレート）
+  下部 58% : タイトル・本文・字幕・CTA・プログレスバー
+テキストはセクション切り替わり時にフェードイン
 """
 
 import logging
@@ -19,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 
-# システムの日本語フォントパス候補
 JAPANESE_FONT_PATHS = [
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf",
@@ -30,6 +34,9 @@ JAPANESE_FONT_PATHS = [
     "C:/Windows/Fonts/meiryo.ttc",
 ]
 
+# 顔写真エリアの高さ比率
+PORTRAIT_RATIO = 0.42
+
 
 def load_config() -> dict:
     with open(CONFIG_DIR / "settings.yaml", encoding="utf-8") as f:
@@ -37,7 +44,6 @@ def load_config() -> dict:
 
 
 def find_japanese_font() -> Optional[str]:
-    """利用可能な日本語フォントパスを返す"""
     for path in JAPANESE_FONT_PATHS:
         if os.path.exists(path):
             return path
@@ -63,19 +69,17 @@ class VideoCreator:
         return ImageFont.load_default()
 
     def _pick_theme(self) -> dict:
-        themes = self.video_config["themes"]
-        return random.choice(themes)
+        return random.choice(self.video_config["themes"])
 
     def _create_background_frame(
         self,
         bg_image_path: Optional[str],
         theme: dict,
-        overlay_alpha: int = 170,
+        overlay_alpha: int = 190,
     ) -> Image.Image:
         """背景フレームを生成する（画像 or グラデーション）"""
         if bg_image_path and os.path.exists(bg_image_path):
             img = Image.open(bg_image_path).convert("RGB")
-            # Shortsサイズにクロップ（センタークロップ）
             img_ratio = img.width / img.height
             target_ratio = self.width / self.height
             if img_ratio > target_ratio:
@@ -87,14 +91,12 @@ class VideoCreator:
                 top = (img.height - new_h) // 2
                 img = img.crop((0, top, img.width, top + new_h))
             img = img.resize((self.width, self.height), Image.LANCZOS)
-            img = img.filter(ImageFilter.GaussianBlur(radius=3))
+            img = img.filter(ImageFilter.GaussianBlur(radius=5))
 
-            # ダーク オーバーレイを乗せる
             overlay = Image.new("RGBA", img.size, (*theme["bg_color"], overlay_alpha))
             img = img.convert("RGBA")
             img = Image.alpha_composite(img, overlay).convert("RGB")
         else:
-            # グラデーション背景
             arr = np.zeros((self.height, self.width, 3), dtype=np.uint8)
             bg = theme["bg_color"]
             for y in range(self.height):
@@ -107,6 +109,47 @@ class VideoCreator:
 
         return img
 
+    def _paste_portrait(self, img: Image.Image, portrait_path: str, theme: dict) -> int:
+        """
+        顔写真を上部 PORTRAIT_RATIO に貼り付け、下端にグラデーションをかける。
+        貼り付けた高さ（px）を返す。失敗時は 0 を返す。
+        """
+        portrait_h = int(self.height * PORTRAIT_RATIO)
+        try:
+            face = Image.open(portrait_path).convert("RGB")
+        except Exception as e:
+            logger.warning(f"顔写真読み込み失敗: {e}")
+            return 0
+
+        # センタークロップ
+        target_ratio = self.width / portrait_h
+        face_ratio = face.width / face.height
+        if face_ratio > target_ratio:
+            new_w = int(face.height * target_ratio)
+            left = (face.width - new_w) // 2
+            face = face.crop((left, 0, left + new_w, face.height))
+        else:
+            new_h = int(face.width / target_ratio)
+            top = (face.height - new_h) // 2
+            face = face.crop((0, top, face.width, top + new_h))
+        face = face.resize((self.width, portrait_h), Image.LANCZOS)
+
+        # 下部65%以降を背景色にフェード
+        overlay_arr = np.zeros((portrait_h, self.width, 4), dtype=np.uint8)
+        bg = theme["bg_color"]
+        fade_start = int(portrait_h * 0.65)
+        for y in range(portrait_h):
+            if y >= fade_start:
+                alpha = int((y - fade_start) / (portrait_h - fade_start) * 255)
+                overlay_arr[y, :] = (*bg, alpha)
+
+        face_blended = Image.alpha_composite(
+            face.convert("RGBA"),
+            Image.fromarray(overlay_arr, "RGBA"),
+        ).convert("RGB")
+        img.paste(face_blended, (0, 0))
+        return portrait_h
+
     def _draw_text_with_shadow(
         self,
         draw: ImageDraw.Draw,
@@ -115,13 +158,16 @@ class VideoCreator:
         font: ImageFont.FreeTypeFont,
         color: tuple,
         shadow_offset: int = 3,
+        alpha: int = 255,
     ):
-        """影付きテキストを描画する"""
+        """影付きテキストを描画する（alpha でフェードイン対応）"""
         x, y = position
-        # 影
-        draw.text((x + shadow_offset, y + shadow_offset), text, font=font, fill=(0, 0, 0, 180))
-        # 本文
-        draw.text((x, y), text, font=font, fill=(*color, 255))
+        shadow_alpha = int(180 * alpha / 255)
+        draw.text(
+            (x + shadow_offset, y + shadow_offset),
+            text, font=font, fill=(0, 0, 0, shadow_alpha),
+        )
+        draw.text((x, y), text, font=font, fill=(*color, alpha))
 
     def _wrap_text(self, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
         """テキストを折り返す"""
@@ -130,9 +176,8 @@ class VideoCreator:
             if not paragraph:
                 lines.append("")
                 continue
-            words = list(paragraph)  # 日本語は1文字単位
             current_line = ""
-            for char in words:
+            for char in list(paragraph):
                 test_line = current_line + char
                 bbox = font.getbbox(test_line)
                 if bbox[2] > max_width and current_line:
@@ -159,7 +204,6 @@ class VideoCreator:
         total_chars = sum(len(s) for s in sentences)
         if total_chars == 0:
             return lambda t: ""
-        # 各文の開始秒を文字数比で推定
         starts = []
         cumulative = 0
         for s in sentences:
@@ -179,14 +223,25 @@ class VideoCreator:
         self,
         script: dict,
         section_index: int,
+        portrait_path: Optional[str],
         bg_image_path: Optional[str],
         theme: dict,
         progress: float = 0.0,
         subtitle_text: str = "",
+        section_progress: float = 1.0,
     ) -> np.ndarray:
         """1フレーム（PIL Image -> numpy array）を生成する"""
         img = self._create_background_frame(bg_image_path, theme)
+
+        # --- 顔写真エリア（上部 PORTRAIT_RATIO）
+        portrait_h = 0
+        if portrait_path and os.path.exists(portrait_path):
+            portrait_h = self._paste_portrait(img, portrait_path, theme)
+
         draw = ImageDraw.Draw(img, "RGBA")
+
+        # テキストフェードイン（0.5秒でフル表示）
+        text_alpha = int(min(1.0, section_progress / 0.5) * 255)
 
         padding = 60
         content_width = self.width - padding * 2
@@ -194,34 +249,32 @@ class VideoCreator:
         title_color = theme["title_color"]
         text_color = theme["text_color"]
 
-        # --- アクセントライン（上部）
-        draw.rectangle(
-            [(0, 0), (self.width, 8)],
-            fill=(*accent_color, 255),
-        )
+        # テキスト開始Y座標
+        if portrait_h > 0:
+            text_start = portrait_h + 20
+            draw.rectangle(
+                [(padding, text_start), (self.width - padding, text_start + 4)],
+                fill=(*accent_color, text_alpha),
+            )
+            text_start += 24
+        else:
+            draw.rectangle([(0, 0), (self.width, 8)], fill=(*accent_color, 255))
+            text_start = 80
 
         # --- タイトル
         title_font = self._get_font(self.video_config["font_size_title"])
-        title_text = script.get("title", "")
-        title_lines = self._wrap_text(title_text, title_font, content_width)
+        title_lines = self._wrap_text(script.get("title", ""), title_font, content_width)
 
-        title_y = 120
-        for line in title_lines[:2]:  # 最大2行
+        cur_y = text_start
+        for line in title_lines[:2]:
             self._draw_text_with_shadow(
-                draw, line, (padding, title_y), title_font, title_color
+                draw, line, (padding, cur_y), title_font, title_color, alpha=text_alpha,
             )
             bbox = title_font.getbbox(line)
-            title_y += bbox[3] - bbox[1] + 15
+            cur_y += bbox[3] - bbox[1] + 12
+        cur_y += 18
 
-        # --- 区切りライン
-        title_y += 20
-        draw.rectangle(
-            [(padding, title_y), (self.width - padding, title_y + 4)],
-            fill=(*accent_color, 200),
-        )
-        title_y += 30
-
-        # --- 本文テキスト
+        # --- 本文（セクションまたはフック）
         sections = script.get("sections", [])
         body_font = self._get_font(self.video_config["font_size_body"])
         small_font = self._get_font(self.video_config["font_size_small"])
@@ -229,54 +282,32 @@ class VideoCreator:
         if sections and section_index < len(sections):
             section = sections[section_index]
             if section.get("heading"):
-                heading_lines = self._wrap_text(section["heading"], body_font, content_width)
-                for line in heading_lines[:1]:
+                h_lines = self._wrap_text(section["heading"], body_font, content_width)
+                for line in h_lines[:1]:
                     self._draw_text_with_shadow(
-                        draw, line, (padding, title_y), body_font, accent_color
+                        draw, line, (padding, cur_y), body_font, accent_color, alpha=text_alpha,
                     )
                     bbox = body_font.getbbox(line)
-                    title_y += bbox[3] - bbox[1] + 10
-                title_y += 10
+                    cur_y += bbox[3] - bbox[1] + 10
+                cur_y += 8
 
+            max_lines = 6 if portrait_h > 0 else 8
             content_lines = self._wrap_text(section["content"], small_font, content_width)
-            for line in content_lines[:8]:  # 最大8行
+            for line in content_lines[:max_lines]:
                 self._draw_text_with_shadow(
-                    draw, line, (padding, title_y), small_font, text_color
+                    draw, line, (padding, cur_y), small_font, text_color, alpha=text_alpha,
                 )
                 bbox = small_font.getbbox(line)
-                title_y += bbox[3] - bbox[1] + 12
+                cur_y += bbox[3] - bbox[1] + 12
 
-        # --- フック（最初のセクション前）
         elif section_index == 0:
             hook_lines = self._wrap_text(script.get("hook", ""), body_font, content_width)
             for line in hook_lines[:4]:
                 self._draw_text_with_shadow(
-                    draw, line, (padding, title_y), body_font, text_color
+                    draw, line, (padding, cur_y), body_font, text_color, alpha=text_alpha,
                 )
                 bbox = body_font.getbbox(line)
-                title_y += bbox[3] - bbox[1] + 15
-
-        # --- CTA（最後）
-        cta_font = self._get_font(self.video_config["font_size_body"])
-        cta_y = self.height - 250
-        cta_text = script.get("cta", "")
-        if cta_text:
-            # CTA背景
-            draw.rectangle(
-                [(padding - 20, cta_y - 20), (self.width - padding + 20, cta_y + 90)],
-                fill=(*accent_color, 60),
-            )
-            draw.rectangle(
-                [(padding - 20, cta_y - 20), (self.width - padding + 20, cta_y - 16)],
-                fill=(*accent_color, 255),
-            )
-            cta_lines = self._wrap_text(cta_text, cta_font, content_width)
-            for line in cta_lines[:2]:
-                self._draw_text_with_shadow(
-                    draw, line, (padding, cta_y), cta_font, title_color
-                )
-                bbox = cta_font.getbbox(line)
-                cta_y += bbox[3] - bbox[1] + 10
+                cur_y += bbox[3] - bbox[1] + 15
 
         # --- 字幕（下部固定エリア）
         if subtitle_text:
@@ -286,18 +317,41 @@ class VideoCreator:
                 line_h = sub_font.getbbox("あ")[3] + 10
                 area_h = len(sub_lines) * line_h + 24
                 sub_top = self.height - 320 - area_h
-                # 半透明背景
                 draw.rectangle(
                     [(padding - 20, sub_top - 8),
                      (self.width - padding + 20, sub_top + area_h)],
-                    fill=(0, 0, 0, 170),
+                    fill=(0, 0, 0, 175),
                 )
                 sy = sub_top
                 for line in sub_lines:
                     self._draw_text_with_shadow(
-                        draw, line, (padding, sy), sub_font, (255, 255, 255), shadow_offset=2
+                        draw, line, (padding, sy), sub_font, (255, 255, 255),
+                        shadow_offset=2, alpha=255,
                     )
                     sy += line_h
+
+        # --- CTA
+        cta_font = self._get_font(self.video_config["font_size_body"])
+        cta_y = self.height - 250
+        cta_text = script.get("cta", "")
+        if cta_text:
+            draw.rectangle(
+                [(padding - 20, cta_y - 20),
+                 (self.width - padding + 20, cta_y + 90)],
+                fill=(*accent_color, 60),
+            )
+            draw.rectangle(
+                [(padding - 20, cta_y - 20),
+                 (self.width - padding + 20, cta_y - 16)],
+                fill=(*accent_color, 255),
+            )
+            cta_lines = self._wrap_text(cta_text, cta_font, content_width)
+            for line in cta_lines[:2]:
+                self._draw_text_with_shadow(
+                    draw, line, (padding, cta_y), cta_font, title_color, alpha=255,
+                )
+                bbox = cta_font.getbbox(line)
+                cta_y += bbox[3] - bbox[1] + 10
 
         # --- プログレスバー
         bar_y = self.height - 12
@@ -316,11 +370,11 @@ class VideoCreator:
         image_paths: list[str],
         output_path: str,
         narration: str = "",
+        portrait_path: Optional[str] = None,
     ) -> str:
         """動画を生成して output_path に保存する"""
         from moviepy.editor import (
             AudioFileClip,
-            CompositeVideoClip,
             VideoClip,
             concatenate_videoclips,
         )
@@ -332,15 +386,13 @@ class VideoCreator:
         audio_clip = AudioFileClip(audio_path)
         total_duration = audio_clip.duration
 
-        # 字幕タイミング関数を準備
+        # 字幕タイミング関数
         language = script.get("language", "ja")
         sentences = self._split_sentences(narration, language) if narration else []
         get_subtitle = self._make_subtitle_func(sentences, total_duration)
 
         sections = script.get("sections", [])
         num_sections = max(len(sections), 1)
-
-        # 各セクションの表示時間を計算
         section_duration = total_duration / num_sections
         clips = []
 
@@ -348,16 +400,16 @@ class VideoCreator:
             start_t = i * section_duration
             bg_image = image_paths[i % len(image_paths)] if image_paths else None
 
-            def make_frame(t, idx=i, bg=bg_image, s_start=start_t):
+            def make_frame(t, idx=i, bg=bg_image, s_start=start_t, portrait=portrait_path):
                 global_t = s_start + t
                 progress = global_t / total_duration
+                sec_prog = min(1.0, t / 0.5)   # 0.5秒でフェードイン完了
                 subtitle = get_subtitle(global_t)
-                return self.create_frame(script, idx, bg, theme, progress, subtitle)
+                return self.create_frame(
+                    script, idx, portrait, bg, theme, progress, subtitle, sec_prog
+                )
 
-            clip = VideoClip(
-                make_frame=make_frame,
-                duration=section_duration,
-            )
+            clip = VideoClip(make_frame=make_frame, duration=section_duration)
             clips.append(clip)
 
         video = concatenate_videoclips(clips, method="compose")
@@ -385,11 +437,7 @@ class VideoCreator:
         tw, th = 1280, 720
         theme = self._pick_theme()
 
-        img = Image.new("RGB", (tw, th), tuple(theme["bg_color"]))
-        draw = ImageDraw.Draw(img, "RGBA")
-
-        # グラデーション背景
-        arr = np.array(img)
+        arr = np.zeros((th, tw, 3), dtype=np.uint8)
         bg = theme["bg_color"]
         for y in range(th):
             ratio = y / th
@@ -403,11 +451,9 @@ class VideoCreator:
         padding = 60
         content_width = tw - padding * 2
 
-        # アクセントライン
         draw.rectangle([(0, 0), (tw, 12)], fill=(*theme["accent_color"], 255))
         draw.rectangle([(0, th - 12), (tw, th)], fill=(*theme["accent_color"], 255))
 
-        # サムネイルテキスト
         thumb_text = script.get("thumbnail_text") or script.get("title", "")
         font_large = self._get_font(110)
         font_small = self._get_font(54)
@@ -416,18 +462,16 @@ class VideoCreator:
         y = 160
         for line in lines[:3]:
             self._draw_text_with_shadow(
-                draw, line, (padding, y), font_large, theme["title_color"], shadow_offset=5
+                draw, line, (padding, y), font_large, theme["title_color"], shadow_offset=5,
             )
             bbox = font_large.getbbox(line)
             y += bbox[3] - bbox[1] + 20
 
-        # タイトル（小）
-        title = script.get("title", "")
-        title_lines = self._wrap_text(title, font_small, content_width)
+        title_lines = self._wrap_text(script.get("title", ""), font_small, content_width)
         ty = th - 180
         for line in title_lines[:2]:
             self._draw_text_with_shadow(
-                draw, line, (padding, ty), font_small, theme["text_color"]
+                draw, line, (padding, ty), font_small, theme["text_color"],
             )
             bbox = font_small.getbbox(line)
             ty += bbox[3] - bbox[1] + 10

@@ -3,6 +3,9 @@
 # AI / Claude API
 anthropic>=0.40.0
 
+# OpenAI TTS
+openai>=1.0.0
+
 # 音声合成
 gTTS>=2.5.0
 edge-tts>=6.1.9

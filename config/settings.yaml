@@ -73,13 +73,21 @@ video:
 
 tts:
   japanese:
-    provider: "edge_tts"
-    voice: "ja-JP-NanamiNeural"
-    speed: 1.1
-  english:
-    provider: "edge_tts"
-    voice: "en-US-AriaNeural"
+    provider: "openai_tts"       # OPENAI_API_KEY がなければ edge_tts に自動フォールバック
+    voice: "nova"                # OpenAI voice（多言語対応）
+    openai_model: "tts-1-hd"
+    edge_voice: "ja-JP-NanamiNeural"  # フォールバック用
     speed: 1.05
+  english:
+    provider: "openai_tts"
+    voice: "alloy"
+    openai_model: "tts-1-hd"
+    edge_voice: "en-US-AriaNeural"
+    speed: 1.0
+
+bgm:
+  enabled: true
+  volume_db: -18.0   # ナレーションより -18dB（聞こえる程度の環境音）
 
 images:
   provider: "pexels"
