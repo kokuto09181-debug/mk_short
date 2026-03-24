@@ -1,0 +1,23 @@
+# YouTube Shorts 自動化システム - 依存パッケージ
+
+# AI・コンテンツ生成
+anthropic>=0.40.0
+
+# TTS (完全無料 - Microsoft Edge TTS)
+edge-tts>=6.1.9
+
+# 動画編集
+moviepy>=2.0.0
+imageio[ffmpeg]>=2.34.0
+
+# 画像処理
+Pillow>=10.0.0
+numpy>=1.26.0
+
+# HTTP クライアント
+requests>=2.31.0
+
+# YouTube API
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.1.0

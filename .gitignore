@@ -1,0 +1,31 @@
+# 出力ファイル（動画は大きいのでGit管理しない）
+output/
+*.mp4
+*.mp3
+*.wav
+
+# 認証情報（絶対にコミットしない！）
+token.json
+client_secret.json
+*.json
+!templates/*.json
+!package.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,78 @@
+{
+  "niches": {
+    "facts": {
+      "ja": {
+        "name": "面白い雑学",
+        "system_prompt": "あなたはYouTube Shortsのスクリプトライターです。視聴者が「へえ！」と驚く面白い雑学・豆知識を提供します。",
+        "prompt_template": "以下の形式でYouTube Shortsのスクリプトを作成してください（約30〜45秒で読める量）。\n\n【テーマ】: {theme}\n\n【出力形式】\nTITLE: (キャッチーなタイトル30文字以内)\nHOOK: (最初の3秒で引き込む一言)\nBODY: (本題の内容、3〜5文で)\nCTA: (「フォローして次の雑学も見てね！」のような締め)\nTAGS: (関連ハッシュタグ5個、#で始まる)\nTHUMBNAIL_TEXT: (サムネイルに入れる短いテキスト)\nBACKGROUND_KEYWORD: (Pexels検索用英単語1〜2個)",
+        "themes": [
+          "宇宙の不思議",
+          "動物の驚く習性",
+          "人体の神秘",
+          "歴史の意外な事実",
+          "食べ物にまつわる雑学",
+          "日本語の面白い語源",
+          "数学の不思議な法則",
+          "心理学の面白い実験",
+          "世界記録の驚くべき事実",
+          "科学の逆説的な発見"
+        ]
+      },
+      "en": {
+        "name": "Amazing Facts",
+        "system_prompt": "You are a YouTube Shorts script writer. You provide mind-blowing facts that make viewers say 'WOW!'",
+        "prompt_template": "Create a YouTube Shorts script in this format (30-45 seconds reading time).\n\n【THEME】: {theme}\n\n【OUTPUT FORMAT】\nTITLE: (catchy title under 60 chars)\nHOOK: (one line that grabs attention in first 3 seconds)\nBODY: (main content, 3-5 sentences)\nCTA: (call to action like 'Follow for more amazing facts!')\nTAGS: (5 relevant hashtags starting with #)\nTHUMBNAIL_TEXT: (short text for thumbnail)\nBACKGROUND_KEYWORD: (1-2 English words for Pexels search)",
+        "themes": [
+          "space mysteries",
+          "animal behavior",
+          "human body facts",
+          "historical surprises",
+          "food science",
+          "psychology experiments",
+          "math paradoxes",
+          "world records",
+          "ocean discoveries",
+          "technology firsts"
+        ]
+      }
+    },
+    "motivation": {
+      "ja": {
+        "name": "名言・モチベーション",
+        "system_prompt": "あなたはYouTube Shortsのスクリプトライターです。心に刺さる名言と解説で視聴者を励ます動画を作ります。",
+        "prompt_template": "以下の形式でYouTube Shortsのスクリプトを作成してください。\n\n【テーマ】: {theme}\n\n【出力形式】\nTITLE: (タイトル30文字以内)\nHOOK: (印象的な名言や問いかけ)\nBODY: (名言の解説と具体的なアドバイス3〜4文)\nCTA: (「フォローしてもっと名言を！」のような締め)\nTAGS: (関連ハッシュタグ5個)\nTHUMBNAIL_TEXT: (サムネイルの短いテキスト)\nBACKGROUND_KEYWORD: (Pexels検索用英単語)",
+        "themes": [
+          "失敗から学ぶ名言",
+          "成功者の朝のルーティン",
+          "お金持ちのマインドセット",
+          "挑戦する勇気",
+          "継続の力",
+          "自己肯定感を高める言葉",
+          "逆境を乗り越える知恵",
+          "夢を叶えるための行動",
+          "人間関係の名言",
+          "時間管理の哲学"
+        ]
+      }
+    },
+    "money": {
+      "ja": {
+        "name": "お金の知識",
+        "system_prompt": "あなたはYouTube Shortsのスクリプトライターです。初心者でもわかるお金の知識・節約術・投資の基礎を教えます。",
+        "prompt_template": "以下の形式でYouTube Shortsのスクリプトを作成してください。\n\n【テーマ】: {theme}\n\n【出力形式】\nTITLE: (タイトル30文字以内)\nHOOK: (視聴者の悩みに共感する一言)\nBODY: (具体的なアドバイスや知識3〜5文)\nCTA: (「フォローしてお金の知識を増やそう！」のような締め)\nTAGS: (関連ハッシュタグ5個)\nTHUMBNAIL_TEXT: (サムネイルの短いテキスト)\nBACKGROUND_KEYWORD: (Pexels検索用英単語)",
+        "themes": [
+          "新NISAの始め方",
+          "月3万円節約する方法",
+          "副業で稼ぐ最初の一歩",
+          "クレジットカードの正しい使い方",
+          "複利の魔法",
+          "インデックス投資の基本",
+          "固定費を削減する方法",
+          "ふるさと納税の活用法",
+          "ポイント活用術",
+          "緊急予備資金の作り方"
+        ]
+      }
+    }
+  }
+}
