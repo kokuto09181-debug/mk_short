@@ -353,17 +353,6 @@ class VideoCreator:
                 bbox = cta_font.getbbox(line)
                 cta_y += bbox[3] - bbox[1] + 10
 
-        # --- 出典テキスト（プログレスバー直上、常時表示）
-        name_ja = script.get("figure_name_ja", "")
-        source_font = self._get_font(22)
-        source_text = f"出典: Wikipedia「{name_ja}」" if name_ja else "出典: Wikipedia"
-        draw.text(
-            (padding, self.height - 42),
-            source_text,
-            font=source_font,
-            fill=(180, 180, 180, 160),
-        )
-
         # --- プログレスバー
         bar_y = self.height - 12
         draw.rectangle([(0, bar_y), (self.width, self.height)], fill=(30, 30, 30, 255))
