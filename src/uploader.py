@@ -25,7 +25,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = ["https://www.googleapis.com/auth/youtube"]
 TOKEN_CACHE_PATH = Path(__file__).parent.parent / ".youtube_token.json"
 
 
