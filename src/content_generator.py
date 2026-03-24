@@ -153,17 +153,39 @@ class ContentGenerator:
         return sep.join(p for p in parts if p)
 
     def build_description(self, script: dict, extra_tags: list[str] = None) -> str:
-        """YouTube動画説明文を組み立てる"""
+        """YouTube動画説明文を組み立てる（出典・参考リンク含む）"""
         desc = script.get("description", "")
         lang = script.get("language", "ja")
+        name_ja = script.get("figure_name_ja", "")
+        name_en = script.get("figure_name_en", "")
 
         if lang == "ja":
             base_tags = ["#偉人", "#日本史", "#歴史", "#shorts", "#雑学"]
+            sources_header = "【参考・出典】"
+            sources_lines = []
+            if name_ja:
+                url = f"https://ja.wikipedia.org/wiki/{name_ja}"
+                sources_lines.append(f"・Wikipedia「{name_ja}」\n  {url}")
+            if name_en:
+                url_en = "https://en.wikipedia.org/wiki/" + name_en.replace(" ", "_")
+                sources_lines.append(f"・Wikipedia \"{name_en}\"\n  {url_en}")
         else:
             base_tags = ["#JapaneseHistory", "#HiddenHeroes", "#Japan", "#Shorts", "#History"]
+            sources_header = "【Sources】"
+            sources_lines = []
+            if name_en:
+                url_en = "https://en.wikipedia.org/wiki/" + name_en.replace(" ", "_")
+                sources_lines.append(f"・Wikipedia \"{name_en}\"\n  {url_en}")
+            if name_ja:
+                url = f"https://ja.wikipedia.org/wiki/{name_ja}"
+                sources_lines.append(f"・Wikipedia「{name_ja}」（日本語）\n  {url}")
+
+        sources_block = ""
+        if sources_lines:
+            sources_block = f"\n\n{sources_header}\n" + "\n".join(sources_lines)
 
         all_tags = base_tags + (extra_tags or [])
-        return f"{desc}\n\n{' '.join(all_tags)}"
+        return f"{desc}{sources_block}\n\n{' '.join(all_tags)}"
 
 
 if __name__ == "__main__":
