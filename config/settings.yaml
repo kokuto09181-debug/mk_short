@@ -1,0 +1,112 @@
+# YouTube Shorts 自動運営 設定ファイル
+
+channel:
+  # YouTube チャンネル設定
+  default_category: "22"  # People & Blogs
+  default_language: "ja"
+  tags:
+    - "shorts"
+    - "ショート"
+    - "YouTube Shorts"
+
+content:
+  # 1日の投稿本数
+  videos_per_day: 3
+
+  # ニッチ・テーマリスト（複数対応）
+  niches:
+    - name: "豆知識・雑学"
+      topics:
+        - "知っておくべき日本の歴史雑学"
+        - "科学の面白い豆知識"
+        - "世界の不思議な記録"
+        - "食べ物に関する驚きの事実"
+        - "動物の驚くべき能力"
+      hashtags: ["#豆知識", "#雑学", "#面白い話", "#知識", "#shorts"]
+
+    - name: "お金・節約術"
+      topics:
+        - "月1万円節約できる方法"
+        - "知らないと損するお金の常識"
+        - "ポイント活用術"
+        - "格安SIMで節約する方法"
+        - "電気代を下げる裏技"
+      hashtags: ["#節約", "#お金", "#副業", "#節約術", "#shorts"]
+
+    - name: "健康・ライフハック"
+      topics:
+        - "睡眠の質を上げる習慣"
+        - "5分でできるストレス解消法"
+        - "集中力を上げる方法"
+        - "疲れが取れない原因と対策"
+        - "脳に良い食べ物ランキング"
+      hashtags: ["#健康", "#ライフハック", "#習慣", "#生活改善", "#shorts"]
+
+video:
+  # 動画フォーマット（YouTube Shorts: 9:16）
+  width: 1080
+  height: 1920
+  fps: 30
+  duration_min: 30   # 秒
+  duration_max: 55   # 秒
+
+  # フォント設定
+  font_size_title: 72
+  font_size_body: 52
+  font_size_small: 38
+
+  # カラーテーマ
+  themes:
+    - name: "dark_blue"
+      bg_color: [10, 10, 40]
+      title_color: [255, 220, 50]
+      text_color: [240, 240, 240]
+      accent_color: [50, 150, 255]
+    - name: "dark_green"
+      bg_color: [10, 35, 20]
+      title_color: [100, 255, 150]
+      text_color: [240, 240, 240]
+      accent_color: [50, 200, 100]
+    - name: "dark_red"
+      bg_color: [40, 10, 10]
+      title_color: [255, 100, 100]
+      text_color: [240, 240, 240]
+      accent_color: [255, 80, 80]
+
+tts:
+  # 音声合成設定
+  provider: "gtts"   # gtts (無料) または edge_tts (無料)
+  language: "ja"
+  speed: 1.15        # 読み上げ速度倍率（Shortsは少し速めが良い）
+
+  # edge_tts 使用時の声（日本語）
+  edge_voice: "ja-JP-NanamiNeural"
+
+images:
+  # Pexels API 設定（無料プランで月25,000リクエスト）
+  provider: "pexels"
+  per_page: 10
+  orientation: "portrait"  # Shorts向け縦向き
+
+upload:
+  # アップロード設定
+  privacy: "public"          # public / private / unlisted
+  made_for_kids: false
+  notify_subscribers: true
+
+  # 投稿スケジュール（JST）
+  schedule_times:
+    - "07:00"
+    - "12:00"
+    - "20:00"
+
+ai:
+  # Claude API 設定
+  model: "claude-haiku-4-5-20251001"  # コスト最適化（Haiku使用）
+  max_tokens: 2000
+  temperature: 0.8
+
+costs:
+  # コスト監視（月間上限）
+  monthly_budget_usd: 5.0
+  alert_threshold_usd: 4.0
