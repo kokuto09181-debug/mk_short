@@ -42,6 +42,7 @@ class NotionFigureClient:
             "Notion-Version": NOTION_VERSION,
             "Content-Type": "application/json",
         })
+        self._error_log_ensured = False
 
     # ─────────────────────────────────────────
     # 内部ヘルパー
@@ -173,12 +174,27 @@ class NotionFigureClient:
         self._patch(f"pages/{page_id}", {"properties": props})
         logger.info(f"完了マーク: page_id={page_id}, jp={jp_video_id}, en={en_video_id}")
 
+    def _ensure_error_log_property(self):
+        """error_log プロパティが DB になければ追加する（初回のみ）"""
+        if self._error_log_ensured:
+            return
+        try:
+            self.session.patch(
+                f"{NOTION_API_BASE}/databases/{self.database_id}",
+                json={"properties": {"error_log": {"rich_text": {}}}},
+                timeout=10,
+            )
+        except Exception as e:
+            logger.warning(f"error_log プロパティの追加に失敗（無視）: {e}")
+        self._error_log_ensured = True
+
     def mark_error(self, page_id: str, error_msg: str):
-        """エラーフラグを立てる"""
+        """エラーフラグを立てる（notes は上書きしない）"""
+        self._ensure_error_log_property()
         self._patch(f"pages/{page_id}", {
             "properties": {
                 "status": {"select": {"name": "error"}},
-                "notes": {"rich_text": [{"text": {"content": f"[ERROR] {error_msg[:2000]}"}}]},
+                "error_log": {"rich_text": [{"text": {"content": error_msg[:2000]}}]},
             }
         })
 
