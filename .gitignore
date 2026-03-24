@@ -18,6 +18,9 @@ env/
 *.wav
 work_*/
 
+# ローカルログ（GitHub Actions アーティファクトで管理）
+logs/
+
 # OS
 .DS_Store
 Thumbs.db

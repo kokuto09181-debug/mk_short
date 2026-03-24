@@ -32,11 +32,13 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
           python - <<'EOF'
-          import logging, sys
+          import sys
           from pathlib import Path
           sys.path.insert(0, str(Path("src")))
-          logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-          from pipeline import Pipeline, FIELDS
+          from pipeline import Pipeline, FIELDS, setup_logging
+          log_file = setup_logging()
+          import logging
+          logging.getLogger(__name__).info(f"ログファイル: {log_file}")
           import random
 
           pipeline = Pipeline(dry_run=True)
@@ -61,3 +63,13 @@ jobs:
           else:
               print("ストック十分。補充不要。")
           EOF
+
+      # ─── ログをアーティファクトとして保存 ────
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: refill-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 30
+          if-no-files-found: ignore

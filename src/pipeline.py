@@ -324,13 +324,31 @@ class Pipeline:
 # CLI エントリポイント
 # ─────────────────────────────────────────────
 
+def setup_logging(log_dir: str = "logs") -> str:
+    """ファイル + コンソールの両方にログを出力する設定。ログファイルパスを返す。"""
+    from datetime import datetime
+
+    Path(log_dir).mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = str(Path(log_dir) / f"pipeline_{timestamp}.log")
+
+    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    logging.basicConfig(
+        level=logging.INFO,
+        format=fmt,
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_path, encoding="utf-8"),
+        ],
+    )
+    return log_path
+
+
 if __name__ == "__main__":
     import argparse
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    log_file = setup_logging()
+    logging.getLogger(__name__).info(f"ログファイル: {log_file}")
 
     parser = argparse.ArgumentParser(description="YouTube Shorts 自動運営パイプライン")
     subparsers = parser.add_subparsers(dest="command")
