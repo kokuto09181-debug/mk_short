@@ -47,6 +47,20 @@ def find_japanese_font() -> Optional[str]:
     for path in JAPANESE_FONT_PATHS:
         if os.path.exists(path):
             return path
+    # fc-list でインストール済みフォントを動的検索
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["fc-list", ":lang=ja", "--format=%{file}\n"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.strip().split("\n"):
+            path = line.strip().split(":")[0]
+            if path and os.path.exists(path):
+                logger.info(f"fc-list でフォント発見: {path}")
+                return path
+    except Exception:
+        pass
     logger.warning("日本語フォントが見つかりません。デフォルトフォントを使用します")
     return None
 

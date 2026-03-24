@@ -6,6 +6,7 @@ Wikipedia API（優先）+ Pexels API（補完）から画像を取得する
 import logging
 import os
 import random
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -48,6 +49,7 @@ class ImageFetcher:
         """Wikipedia APIで偉人の画像を取得する。日英両方を試みる"""
         os.makedirs(output_dir, exist_ok=True)
         paths = []
+        seen_urls: set[str] = set()  # 同一URLの重複ダウンロードを防ぐ
 
         for api_url, name in [
             (WIKIPEDIA_API_JP, name_ja),
@@ -56,7 +58,9 @@ class ImageFetcher:
             if not name:
                 continue
             try:
-                new_paths = self._fetch_wiki_images_for(api_url, name, output_dir, len(paths))
+                new_paths = self._fetch_wiki_images_for(
+                    api_url, name, output_dir, len(paths), seen_urls
+                )
                 paths.extend(new_paths)
                 if len(paths) >= 4:
                     break
@@ -67,7 +71,8 @@ class ImageFetcher:
         return paths
 
     def _fetch_wiki_images_for(
-        self, api_url: str, name: str, output_dir: str, offset: int
+        self, api_url: str, name: str, output_dir: str, offset: int,
+        seen_urls: set,
     ) -> list[str]:
         """指定言語のWikipediaから画像を取得する"""
         params = {
@@ -90,31 +95,33 @@ class ImageFetcher:
 
             # pageimages のサムネイル（最も関連性が高い画像）
             thumb = page.get("thumbnail", {})
-            if thumb.get("source"):
+            thumb_url = thumb.get("source", "")
+            if thumb_url and thumb_url not in seen_urls:
+                seen_urls.add(thumb_url)
                 path = self._download_from_url(
-                    thumb["source"], output_dir, f"wiki_{offset + len(paths):02d}"
+                    thumb_url, output_dir, f"wiki_{offset + len(paths):02d}"
                 )
                 if path:
                     paths.append(path)
 
-            # images リストから人物写真を追加で取得
-            for img_meta in page.get("images", [])[:5]:
+            # images リストから人物写真を1枚だけ追加
+            for img_meta in page.get("images", [])[:8]:
+                if len(paths) >= 2:
+                    break
                 title = img_meta.get("title", "")
                 lower = title.lower()
-                # SVG・アイコン・地図は除外
                 if any(x in lower for x in [".svg", "icon", "map", "logo", "flag"]):
                     continue
                 if not any(lower.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
                     continue
                 img_url = self._get_wiki_image_url(api_url, title)
-                if img_url:
+                if img_url and img_url not in seen_urls:
+                    seen_urls.add(img_url)
                     path = self._download_from_url(
                         img_url, output_dir, f"wiki_{offset + len(paths):02d}"
                     )
                     if path:
                         paths.append(path)
-                if len(paths) >= 3:
-                    break
 
         return paths
 
@@ -143,12 +150,18 @@ class ImageFetcher:
         self, url: str, output_dir: str, filename: str
     ) -> Optional[str]:
         """URLから直接画像をダウンロードして保存パスを返す"""
+        time.sleep(1.0)  # Wikimedia レート制限対策
         try:
             ext = url.split("?")[0].rsplit(".", 1)[-1].lower()
             if ext not in ("jpg", "jpeg", "png", "webp"):
                 ext = "jpg"
             output_path = os.path.join(output_dir, f"{filename}.{ext}")
             resp = self._wiki_session.get(url, timeout=30, stream=True)
+            if resp.status_code == 429:
+                wait = int(resp.headers.get("Retry-After", 10))
+                logger.warning(f"Wikipedia rate limit. {wait}秒待機...")
+                time.sleep(wait)
+                resp = self._wiki_session.get(url, timeout=30, stream=True)
             resp.raise_for_status()
             with open(output_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=8192):
