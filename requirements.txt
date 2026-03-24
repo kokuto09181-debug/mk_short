@@ -9,7 +9,7 @@ edge-tts>=6.1.9
 pydub>=0.25.1
 
 # 動画編集
-moviepy>=1.0.3
+moviepy>=1.0.3,<2.0
 Pillow>=10.0.0
 numpy>=1.24.0
 
@@ -30,5 +30,3 @@ tenacity>=8.2.3
 # 音声処理
 ffmpeg-python>=0.2.0
 
-# 日本語フォント
-japanize-matplotlib>=1.1.3
