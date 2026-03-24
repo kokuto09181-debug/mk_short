@@ -59,16 +59,59 @@ class Pipeline:
     def __init__(self, dry_run: bool = False):
         """
         dry_run=True の場合、動画生成まで行うがYouTubeへのアップロードは行わない
+        コンポーネントは実際に使用するタイミングで初期化（レイジーロード）
         """
         self.config = load_config()
         self.dry_run = dry_run
-        self.notion = NotionFigureClient()
-        self.generator = ContentGenerator()
-        self.tts = TTSGenerator()
-        self.image_fetcher = ImageFetcher()
-        self.video_creator = VideoCreator()
-        self.uploader_jp = YouTubeUploader(channel="japanese")
-        self.uploader_en = YouTubeUploader(channel="english")
+        self._notion = None
+        self._generator = None
+        self._tts = None
+        self._image_fetcher = None
+        self._video_creator = None
+        self._uploader_jp = None
+        self._uploader_en = None
+
+    @property
+    def notion(self):
+        if self._notion is None:
+            self._notion = NotionFigureClient()
+        return self._notion
+
+    @property
+    def generator(self):
+        if self._generator is None:
+            self._generator = ContentGenerator()
+        return self._generator
+
+    @property
+    def tts(self):
+        if self._tts is None:
+            self._tts = TTSGenerator()
+        return self._tts
+
+    @property
+    def image_fetcher(self):
+        if self._image_fetcher is None:
+            self._image_fetcher = ImageFetcher()
+        return self._image_fetcher
+
+    @property
+    def video_creator(self):
+        if self._video_creator is None:
+            self._video_creator = VideoCreator()
+        return self._video_creator
+
+    @property
+    def uploader_jp(self):
+        if self._uploader_jp is None:
+            self._uploader_jp = YouTubeUploader(channel="japanese")
+        return self._uploader_jp
+
+    @property
+    def uploader_en(self):
+        if self._uploader_en is None:
+            self._uploader_en = YouTubeUploader(channel="english")
+        return self._uploader_en
 
     # ─────────────────────────────────────────
     # メイン実行
