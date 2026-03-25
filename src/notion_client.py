@@ -206,6 +206,46 @@ class NotionFigureClient:
             logger.warning(f"error_log プロパティの追加に失敗（無視）: {e}")
         self._error_log_ensured = True
 
+    def write_scripts(self, page_id: str, script_ja_json: str, script_en_json: str):
+        """Claudeが生成した脚本JSONをNotionページに書き込む"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "script_ja": {"rich_text": self._split_rich_text(script_ja_json)},
+                "script_en": {"rich_text": self._split_rich_text(script_en_json)},
+            }
+        })
+        logger.info(f"脚本書き込み完了: page_id={page_id}")
+
+    def get_pending_without_scripts(self, limit: int = 10) -> list[dict]:
+        """script_ja が空の pending/error 偉人を取得する"""
+        data = self.query_figures({
+            "and": [
+                {"or": [
+                    {"property": "status", "select": {"equals": "pending"}},
+                    {"property": "status", "select": {"equals": "error"}},
+                ]},
+                {"property": "script_ja", "rich_text": {"is_empty": True}},
+            ]
+        })
+        figures = [self._page_to_figure(p) for p in data]
+        logger.info(f"脚本未生成: {len(figures)} 件")
+        return figures[:limit]
+
+    def ensure_script_properties(self):
+        """script_ja / script_en プロパティが DB になければ追加する"""
+        try:
+            self.session.patch(
+                f"{NOTION_API_BASE}/databases/{self.database_id}",
+                json={"properties": {
+                    "script_ja": {"rich_text": {}},
+                    "script_en": {"rich_text": {}},
+                }},
+                timeout=10,
+            )
+            logger.info("script_ja / script_en プロパティを確認・追加しました")
+        except Exception as e:
+            logger.warning(f"script プロパティの追加に失敗（無視）: {e}")
+
     def mark_error(self, page_id: str, error_msg: str):
         """エラーフラグを立てる（notes は上書きしない）"""
         self._ensure_error_log_property()
@@ -219,6 +259,11 @@ class NotionFigureClient:
     # ─────────────────────────────────────────
     # ユーティリティ
     # ─────────────────────────────────────────
+
+    @staticmethod
+    def _split_rich_text(text: str, chunk_size: int = 2000) -> list:
+        """長いテキストをNotionのrich_textブロックリストに分割する"""
+        return [{"text": {"content": text[i:i+chunk_size]}} for i in range(0, len(text), chunk_size)]
 
     @staticmethod
     def _get_prop_text(props: dict, key: str) -> str:
@@ -256,6 +301,8 @@ class NotionFigureClient:
             "field": self._get_prop_select(props, "field"),
             "notes": self._get_prop_text(props, "notes"),
             "status": self._get_prop_select(props, "status"),
+            "script_ja": self._get_prop_text(props, "script_ja"),
+            "script_en": self._get_prop_text(props, "script_en"),
         }
 
     # ─────────────────────────────────────────
@@ -301,6 +348,8 @@ class NotionFigureClient:
                     {"name": "done", "color": "green"},
                     {"name": "error", "color": "red"},
                 ]}},
+                "script_ja": {"rich_text": {}},
+                "script_en": {"rich_text": {}},
                 "title_ja": {"rich_text": {}},
                 "title_en": {"rich_text": {}},
                 "jp_video_id": {"rich_text": {}},

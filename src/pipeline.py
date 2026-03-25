@@ -161,8 +161,25 @@ class Pipeline:
 
         work_dir = tempfile.mkdtemp(prefix=f"shorts_{name_ja[:8]}_")
         try:
-            # 1. 脚本生成（日英）
-            script_ja, script_en = self.generator.generate_both_languages(figure)
+            # 1. 脚本生成（日英）- Notionに既存の脚本があれば使う
+            script_ja_json = figure.get("script_ja", "")
+            script_en_json = figure.get("script_en", "")
+            if script_ja_json and script_en_json:
+                try:
+                    script_ja = json.loads(script_ja_json)
+                    script_en = json.loads(script_en_json)
+                    for s, lang in [(script_ja, "ja"), (script_en, "en")]:
+                        s["language"] = lang
+                        s["figure_name_ja"] = figure.get("name_ja", "")
+                        s["figure_name_en"] = figure.get("name_en", "")
+                        s["figure_era"] = figure.get("era", "")
+                        s["figure_field"] = figure.get("field", "")
+                    logger.info(f"Notionの既存脚本を使用: {name_ja}")
+                except (json.JSONDecodeError, KeyError):
+                    logger.warning("脚本JSONのパースに失敗。APIで再生成します")
+                    script_ja, script_en = self.generator.generate_both_languages(figure)
+            else:
+                script_ja, script_en = self.generator.generate_both_languages(figure)
 
             # 2. 背景画像取得 - まずWikipediaで偉人の実際の画像を取得
             img_dir = os.path.join(work_dir, "images")
