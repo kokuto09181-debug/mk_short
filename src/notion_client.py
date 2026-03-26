@@ -161,6 +161,68 @@ class NotionFigureClient:
         logger.info(f"追加: {figure.get('name_ja')} (id={page_id})")
         return page_id
 
+    @staticmethod
+    def _json_to_rich_text(obj: dict) -> list[dict]:
+        """dictをJSON文字列化してNotionのrich_textブロック（2000字制限対応）に変換"""
+        import json as _json
+        text = _json.dumps(obj, ensure_ascii=False)
+        return [{"text": {"content": text[i:i+2000]}} for i in range(0, len(text), 2000)]
+
+    def save_scripts(self, page_id: str, script_ja: dict, script_en: dict):
+        """台本（日英）をNotionに保存する"""
+        self._ensure_script_properties()
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "script_ja": {"rich_text": self._json_to_rich_text(script_ja)},
+                "script_en": {"rich_text": self._json_to_rich_text(script_en)},
+            }
+        })
+        logger.info(f"台本保存: page_id={page_id}")
+
+    def get_scripts(self, page_id: str) -> tuple[dict | None, dict | None]:
+        """NotionページからJSONパース済み台本（日英）を返す。未保存なら(None, None)"""
+        import json as _json
+        page = self._get(f"pages/{page_id}")
+        props = page.get("properties", {})
+        ja_text = self._get_prop_text(props, "script_ja")
+        en_text = self._get_prop_text(props, "script_en")
+        try:
+            script_ja = _json.loads(ja_text) if ja_text else None
+        except Exception:
+            script_ja = None
+        try:
+            script_en = _json.loads(en_text) if en_text else None
+        except Exception:
+            script_en = None
+        return script_ja, script_en
+
+    def get_pending_without_scripts(self, limit: int = 10) -> list[dict]:
+        """status=pending かつ script_ja が未設定の偉人を返す（Cron台本生成用）"""
+        data = self.query_figures({
+            "and": [
+                {"property": "status", "select": {"equals": "pending"}},
+                {"property": "script_ja", "rich_text": {"is_empty": True}},
+            ]
+        })
+        return [self._page_to_figure(p) for p in data[:limit]]
+
+    def _ensure_script_properties(self):
+        """script_ja / script_en プロパティがDBになければ追加する（初回のみ）"""
+        if getattr(self, "_script_props_ensured", False):
+            return
+        try:
+            self.session.patch(
+                f"{NOTION_API_BASE}/databases/{self.database_id}",
+                json={"properties": {
+                    "script_ja": {"rich_text": {}},
+                    "script_en": {"rich_text": {}},
+                }},
+                timeout=10,
+            )
+        except Exception as e:
+            logger.warning(f"script プロパティの追加に失敗（無視）: {e}")
+        self._script_props_ensured = True
+
     def mark_producing(self, page_id: str):
         """制作中フラグを立てる（並列実行時の2重取得防止）"""
         self._patch(f"pages/{page_id}", {

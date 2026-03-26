@@ -170,7 +170,17 @@ class Pipeline:
         work_dir = tempfile.mkdtemp(prefix=f"shorts_{name_ja[:8]}_")
         try:
             # 1. 脚本生成（日英）
-            script_ja, script_en = self.generator.generate_both_languages(figure)
+            # Notionに保存済みの台本があればそれを使用（Claude API呼び出し不要）
+            script_ja, script_en = self.notion.get_scripts(page_id)
+            if script_ja and script_en:
+                logger.info(f"Notion台本を使用: {name_ja}")
+            else:
+                script_ja, script_en = self.generator.generate_both_languages(figure)
+                # 生成した台本をNotionに保存（次回以降の再利用のため）
+                try:
+                    self.notion.save_scripts(page_id, script_ja, script_en)
+                except Exception as e:
+                    logger.warning(f"台本のNotion保存失敗（続行）: {e}")
 
             # 2. 背景画像取得 - まずWikipediaで偉人の実際の画像を取得
             img_dir = os.path.join(work_dir, "images")
