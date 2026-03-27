@@ -45,7 +45,8 @@ jobs:
       # fonts-vlgothic のみ追加インストール（約5MB）
       - name: Install system dependencies
         run: |
-          sudo apt-get install -y -q --no-install-recommends fonts-vlgothic
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-vlgothic
 
       # ─── Python 依存パッケージ ────────────────
       - name: Install Python dependencies
