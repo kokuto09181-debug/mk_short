@@ -271,7 +271,7 @@ class Pipeline:
         tts_gen.provider = self.config["tts"][tts_lang_key].get("provider", "edge_tts")
 
         audio_path, duration = tts_gen.generate_with_speed(
-            narration, work_dir, field=figure.get("field", "")
+            narration, work_dir
         )
         logger.info(f"[{lang_label}] 音声（BGM込み）: {duration:.1f}秒")
 
