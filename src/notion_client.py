@@ -303,7 +303,69 @@ class NotionFigureClient:
             "status": self._get_prop_select(props, "status"),
             "script_ja": self._get_prop_text(props, "script_ja"),
             "script_en": self._get_prop_text(props, "script_en"),
+            "research_data": self._get_prop_text(props, "research_data"),
+            "long_script_ja": self._get_prop_text(props, "long_script_ja"),
+            "long_script_en": self._get_prop_text(props, "long_script_en"),
         }
+
+    # ─────────────────────────────────────────
+    # 長編動画用メソッド
+    # ─────────────────────────────────────────
+
+    def ensure_longform_properties(self):
+        """research_data / long_script_ja / long_script_en プロパティが DB になければ追加する"""
+        try:
+            self.session.patch(
+                f"{NOTION_API_BASE}/databases/{self.database_id}",
+                json={"properties": {
+                    "research_data": {"rich_text": {}},
+                    "long_script_ja": {"rich_text": {}},
+                    "long_script_en": {"rich_text": {}},
+                }},
+                timeout=10,
+            )
+            logger.info("research_data / long_script_ja / long_script_en プロパティを確認・追加しました")
+        except Exception as e:
+            logger.warning(f"longform プロパティの追加に失敗（無視）: {e}")
+
+    def save_research_data(self, page_id: str, research_text: str):
+        """Wikipedia等から収集した偉人情報をNotionに保存する"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "research_data": {"rich_text": self._split_rich_text(research_text)},
+            }
+        })
+        logger.info(f"research_data 保存完了: page_id={page_id} ({len(research_text)}文字)")
+
+    def save_long_scripts(self, page_id: str, long_script_ja_json: str, long_script_en_json: str):
+        """長編動画の脚本JSONをNotionに保存する"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "long_script_ja": {"rich_text": self._split_rich_text(long_script_ja_json)},
+                "long_script_en": {"rich_text": self._split_rich_text(long_script_en_json)},
+            }
+        })
+        logger.info(f"long_script 保存完了: page_id={page_id}")
+
+    def get_figures_without_research(self, limit: int = 10) -> list[dict]:
+        """research_data が空の全偉人を取得する"""
+        data = self.query_figures({
+            "property": "research_data",
+            "rich_text": {"is_empty": True},
+        })
+        figures = [self._page_to_figure(p) for p in data]
+        logger.info(f"research_data 未収集: {len(figures)} 件")
+        return figures[:limit]
+
+    def get_figures_without_long_scripts(self, limit: int = 10) -> list[dict]:
+        """long_script_ja が空の偉人を取得する"""
+        data = self.query_figures({
+            "property": "long_script_ja",
+            "rich_text": {"is_empty": True},
+        })
+        figures = [self._page_to_figure(p) for p in data]
+        logger.info(f"long_script 未生成: {len(figures)} 件")
+        return figures[:limit]
 
     # ─────────────────────────────────────────
     # DB 初期セットアップ
@@ -355,6 +417,9 @@ class NotionFigureClient:
                 "jp_video_id": {"rich_text": {}},
                 "en_video_id": {"rich_text": {}},
                 "produced_at": {"date": {}},
+                "research_data": {"rich_text": {}},
+                "long_script_ja": {"rich_text": {}},
+                "long_script_en": {"rich_text": {}},
             },
         }
         result = self._post("databases", payload)
