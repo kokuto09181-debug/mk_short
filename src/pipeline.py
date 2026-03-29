@@ -26,7 +26,7 @@ from typing import Optional
 import yaml
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(encoding="utf-8", override=True)
 
 # src モジュールのパスを通す
 sys.path.insert(0, str(Path(__file__).parent))
@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 DATA_DIR = Path(__file__).parent.parent / "data"
+PENDING_DIR = DATA_DIR / "pending_uploads"
 
 FIELDS = [
     "科学者・発明家",
@@ -124,6 +125,13 @@ class Pipeline:
         """1日分の動画を生成・投稿する"""
         n = videos_per_day or self.config["content"]["videos_per_day"]
         logger.info(f"=== パイプライン開始: {n}本 × 日英2チャンネル ===")
+
+        # BGMが未ダウンロードなら自動取得
+        self._ensure_bgm()
+
+        # 前回アップロード失敗分をリトライ
+        if not self.dry_run:
+            self._retry_pending_uploads()
 
         # 中断等でproducingのまま残ったものをリセット
         self.notion.reset_stale_producing()
@@ -269,7 +277,9 @@ class Pipeline:
         tts_gen.tts_config = self.config["tts"][tts_lang_key]
         tts_gen.provider = self.config["tts"][tts_lang_key].get("provider", "edge_tts")
 
-        audio_path, duration = tts_gen.generate_with_speed(narration, work_dir)
+        audio_path, duration = tts_gen.generate_with_speed(
+            narration, work_dir
+        )
         logger.info(f"[{lang_label}] 音声（BGM込み）: {duration:.1f}秒")
 
         # 動画生成（顔写真レイアウト + 字幕 + テキストアニメ）
@@ -295,14 +305,123 @@ class Pipeline:
         uploader = self.uploader_jp if language == "ja" else self.uploader_en
         description = self.generator.build_description(script)
 
-        video_id = uploader.upload(
-            video_path=video_path,
-            title=script["title"],
-            description=description,
-            thumbnail_path=thumb_path,
-        )
+        try:
+            video_id = uploader.upload(
+                video_path=video_path,
+                title=script["title"],
+                description=description,
+                thumbnail_path=thumb_path,
+            )
+            return video_id
+        except Exception as upload_err:
+            logger.warning(f"[{lang_label}] アップロード失敗。保留フォルダに保存: {upload_err}")
+            self._save_pending(
+                video_path=video_path,
+                thumb_path=thumb_path,
+                language=language,
+                title=script["title"],
+                description=description,
+                figure=figure,
+                script=script,
+            )
+            raise
 
-        return video_id
+    # ─────────────────────────────────────────
+    # BGM 自動ダウンロード
+    # ─────────────────────────────────────────
+
+    def _ensure_bgm(self):
+        """BGMが未ダウンロードの場合、Internet Archive（パブリックドメイン）から自動取得する"""
+        bgm_root = DATA_DIR / "bgm"
+        moods = ["inspiring", "empowering", "classical", "calm", "dramatic"]
+        missing = [m for m in moods if not list((bgm_root / m).glob("*.mp3")) and not list((bgm_root / m).glob("*.ogg"))] if bgm_root.exists() else moods
+
+        if not missing:
+            return
+
+        logger.info(f"BGM未ダウンロード: {missing} → Internet Archive（パブリックドメイン）から取得")
+        try:
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, str(Path(__file__).parent.parent / "scripts" / "download_bgm.py")],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                logger.info("BGMダウンロード完了")
+            else:
+                logger.warning(f"BGMダウンロード失敗（合成BGMで続行）: {result.stderr[-200:]}")
+        except Exception as e:
+            logger.warning(f"BGMダウンロードエラー（合成BGMで続行）: {e}")
+
+    # ─────────────────────────────────────────
+    # 保留アップロード管理
+    # ─────────────────────────────────────────
+
+    def _save_pending(self, video_path, thumb_path, language, title, description, figure, script):
+        """アップロード失敗時に動画と必要情報をローカルに保存する"""
+        import datetime
+        PENDING_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        slot = PENDING_DIR / f"{figure['name_ja'][:8]}_{language}_{ts}"
+        slot.mkdir()
+
+        dst_video = slot / "output.mp4"
+        dst_thumb = slot / "thumbnail.jpg"
+        shutil.copy2(video_path, dst_video)
+        if os.path.exists(thumb_path):
+            shutil.copy2(thumb_path, dst_thumb)
+
+        meta = {
+            "language": language,
+            "title": title,
+            "description": description,
+            "page_id": figure.get("page_id", ""),
+            "name_ja": figure.get("name_ja", ""),
+            "name_en": figure.get("name_en", ""),
+        }
+        with open(slot / "metadata.json", "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"保留保存: {slot}")
+
+    def _retry_pending_uploads(self):
+        """保留フォルダ内の動画を順番にアップロード再試行する"""
+        if not PENDING_DIR.exists():
+            return
+
+        slots = sorted(PENDING_DIR.iterdir())
+        if not slots:
+            return
+
+        logger.info(f"=== 保留アップロード: {len(slots)}件 ===")
+        for slot in slots:
+            meta_path = slot / "metadata.json"
+            video_path = slot / "output.mp4"
+            thumb_path = slot / "thumbnail.jpg"
+
+            if not meta_path.exists() or not video_path.exists():
+                logger.warning(f"保留フォルダが不完全のためスキップ: {slot.name}")
+                continue
+
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+
+            language = meta["language"]
+            lang_label = "日本語" if language == "ja" else "英語"
+            logger.info(f"[{lang_label}] 保留再試行: {meta['name_ja']} / {meta['title']}")
+
+            try:
+                uploader = self.uploader_jp if language == "ja" else self.uploader_en
+                video_id = uploader.upload(
+                    video_path=str(video_path),
+                    title=meta["title"],
+                    description=meta["description"],
+                    thumbnail_path=str(thumb_path) if thumb_path.exists() else None,
+                )
+                logger.info(f"[{lang_label}] 保留再試行成功: {video_id}")
+                shutil.rmtree(slot)
+            except Exception as e:
+                logger.warning(f"[{lang_label}] 保留再試行失敗（次回に持ち越し）: {e}")
 
     # ─────────────────────────────────────────
     # Notion ストック管理

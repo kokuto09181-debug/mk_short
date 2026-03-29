@@ -377,6 +377,32 @@ class VideoCreator:
 
         return np.array(img)
 
+    def _draw_subtitle_on_array(self, frame: np.ndarray, subtitle: str) -> np.ndarray:
+        """字幕テキストをnumpy配列フレームに描画して返す"""
+        img = Image.fromarray(frame)
+        draw = ImageDraw.Draw(img, "RGBA")
+        sub_font = self._get_font(self.video_config.get("font_size_subtitle", 42))
+        padding = 60
+        content_width = self.width - padding * 2
+        sub_lines = self._wrap_text(subtitle, sub_font, content_width - 20)[:3]
+        if sub_lines:
+            line_h = sub_font.getbbox("あ")[3] + 10
+            area_h = len(sub_lines) * line_h + 24
+            sub_top = self.height - 320 - area_h
+            draw.rectangle(
+                [(padding - 20, sub_top - 8),
+                 (self.width - padding + 20, sub_top + area_h)],
+                fill=(0, 0, 0, 175),
+            )
+            sy = sub_top
+            for line in sub_lines:
+                self._draw_text_with_shadow(
+                    draw, line, (padding, sy), sub_font, (255, 255, 255),
+                    shadow_offset=2, alpha=255,
+                )
+                sy += line_h
+        return np.array(img)
+
     def create_video(
         self,
         script: dict,
@@ -387,11 +413,7 @@ class VideoCreator:
         portrait_path: Optional[str] = None,
     ) -> str:
         """動画を生成して output_path に保存する"""
-        from moviepy.editor import (
-            AudioFileClip,
-            VideoClip,
-            concatenate_videoclips,
-        )
+        from moviepy.editor import AudioFileClip, VideoClip
 
         logger.info(f"動画生成開始: {script.get('title', 'untitled')}")
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
@@ -408,38 +430,87 @@ class VideoCreator:
         sections = script.get("sections", [])
         num_sections = max(len(sections), 1)
         section_duration = total_duration / num_sections
-        clips = []
 
+        # ─── プリレンダリング: セクションごとに基本フレームを1枚だけ描画 ───
+        # (プログレスバー・字幕なし、フェードイン完了状態)
+        logger.info(f"基本フレームをプリレンダリング中 ({num_sections}枚)...")
+        base_frames: list[np.ndarray] = []
         for i in range(num_sections):
-            start_t = i * section_duration
-            bg_image = image_paths[i % len(image_paths)] if image_paths else None
+            bg = image_paths[i % len(image_paths)] if image_paths else None
+            frame = self.create_frame(
+                script, i, portrait_path, bg, theme,
+                progress=0.0, subtitle_text="", section_progress=1.0,
+            )
+            base_frames.append(frame.copy())
 
-            def make_frame(t, idx=i, bg=bg_image, s_start=start_t, portrait=portrait_path):
-                global_t = s_start + t
-                progress = global_t / total_duration
-                sec_prog = min(1.0, t / 0.5)   # 0.5秒でフェードイン完了
-                subtitle = get_subtitle(global_t)
+        # ─── 字幕キャッシュ: (section_idx, subtitle) → 字幕描画済みarray ───
+        subtitle_cache: dict[tuple, np.ndarray] = {}
+
+        def get_subtitled_frame(section_idx: int, subtitle: str) -> np.ndarray:
+            key = (section_idx, subtitle)
+            if key not in subtitle_cache:
+                if subtitle:
+                    subtitle_cache[key] = self._draw_subtitle_on_array(
+                        base_frames[section_idx], subtitle
+                    )
+                else:
+                    subtitle_cache[key] = base_frames[section_idx]
+            return subtitle_cache[key]
+
+        accent = list(theme["accent_color"])
+        bar_y = self.height - 12
+
+        def make_frame(t: float) -> np.ndarray:
+            section_idx = min(int(t / section_duration), num_sections - 1)
+            section_t = t - section_idx * section_duration
+            section_progress = min(1.0, section_t / 0.5)
+            progress = t / total_duration
+            subtitle = get_subtitle(t)
+
+            # フェードイン中（各セクション先頭0.5秒）はフル描画
+            if section_progress < 1.0:
+                bg = image_paths[section_idx % len(image_paths)] if image_paths else None
                 return self.create_frame(
-                    script, idx, portrait, bg, theme, progress, subtitle, sec_prog
+                    script, section_idx, portrait_path, bg, theme,
+                    progress, subtitle, section_progress,
                 )
 
-            clip = VideoClip(make_frame=make_frame, duration=section_duration)
-            clips.append(clip)
+            # フェードイン完了後: キャッシュ済みフレームをコピーしてプログレスバーのみ更新
+            frame = get_subtitled_frame(section_idx, subtitle).copy()
+            frame[bar_y:, :] = [30, 30, 30]
+            pw = int(self.width * progress)
+            if pw > 0:
+                frame[bar_y:, :pw] = accent
+            return frame
 
-        video = concatenate_videoclips(clips, method="compose")
+        video = VideoClip(make_frame=make_frame, duration=total_duration)
         video = video.set_audio(audio_clip)
         video = video.set_fps(self.fps)
 
         logger.info(f"動画書き出し: {output_path} ({total_duration:.1f}秒)")
-        video.write_videofile(
-            output_path,
-            fps=self.fps,
-            codec="libx264",
-            audio_codec="aac",
-            preset="fast",
-            threads=2,
-            logger=None,
-        )
+        use_gpu = os.environ.get("USE_GPU_ENCODER", "").lower() in ("1", "true", "yes")
+        if use_gpu:
+            logger.info("エンコーダー: h264_nvenc (GPU)")
+            video.write_videofile(
+                output_path,
+                fps=self.fps,
+                codec="h264_nvenc",
+                audio_codec="aac",
+                ffmpeg_params=["-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"],
+                threads=8,
+                logger=None,
+            )
+        else:
+            logger.info("エンコーダー: libx264 (CPU)")
+            video.write_videofile(
+                output_path,
+                fps=self.fps,
+                codec="libx264",
+                audio_codec="aac",
+                preset="fast",
+                threads=4,
+                logger=None,
+            )
 
         audio_clip.close()
         video.close()
