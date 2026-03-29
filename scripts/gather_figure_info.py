@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 WIKI_JA_API = "https://ja.wikipedia.org/w/api.php"
 WIKI_EN_API = "https://en.wikipedia.org/w/api.php"
 
+HEADERS = {
+    "User-Agent": "mk_short/1.0 (YouTube Shorts automation; https://github.com/kokuto09181-debug/mk_short) python-requests/2.31"
+}
+
 JA_EXTRACT_MAX = 6000   # 日本語Wikipediaから最大6000文字
 EN_EXTRACT_MAX = 2000   # 英語Wikipediaから最大2000文字（補足）
 REQUEST_DELAY = 1.5     # Wikipedia API リクエスト間隔（秒）
@@ -51,7 +55,7 @@ def fetch_wikipedia_extract(title: str, lang: str = "ja") -> str:
         "redirects": True,
     }
     try:
-        resp = requests.get(api_url, params=params, timeout=15)
+        resp = requests.get(api_url, params=params, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         pages = data.get("query", {}).get("pages", {})
@@ -76,7 +80,7 @@ def search_wikipedia(query: str, lang: str = "ja") -> str:
         "format": "json",
     }
     try:
-        resp = requests.get(api_url, params=params, timeout=15)
+        resp = requests.get(api_url, params=params, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         results = data.get("query", {}).get("search", [])
