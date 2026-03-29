@@ -325,8 +325,9 @@ class NotionFigureClient:
     # ─────────────────────────────────────────
 
     @staticmethod
-    def _split_rich_text(text: str, chunk_size: int = 2000) -> list:
-        """長いテキストをNotionのrich_textブロックリストに分割する"""
+    def _split_rich_text(text: str, chunk_size: int = 1900) -> list:
+        """長いテキストをNotionのrich_textブロックリストに分割する
+        Notionはサロゲートペア文字を2文字カウントするため1900字を上限とする"""
         return [{"text": {"content": text[i:i+chunk_size]}} for i in range(0, len(text), chunk_size)]
 
     @staticmethod
