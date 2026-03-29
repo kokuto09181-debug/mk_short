@@ -1,0 +1,66 @@
+name: Long-form Video Pipeline
+
+on:
+  # 手動トリガー（テスト・本番実行）
+  workflow_dispatch:
+    inputs:
+      step:
+        description: "実行ステップ"
+        type: choice
+        options:
+          - "all"            # Step1（情報収集）→ Step2（脚本生成）を連続実行
+          - "gather_only"    # Step1のみ（Wikipedia情報収集）
+          - "generate_only"  # Step2のみ（脚本生成）
+        default: "all"
+      limit:
+        description: "最大処理件数（デフォルト: 5）"
+        type: string
+        default: "5"
+
+env:
+  PYTHONUNBUFFERED: "1"
+  TZ: "Asia/Tokyo"
+
+jobs:
+  longform-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ─── Step 1: Wikipedia情報収集 ────────────────
+      - name: Step1 - Gather Wikipedia info
+        if: ${{ github.event.inputs.step == 'all' || github.event.inputs.step == 'gather_only' }}
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          LIMIT="${{ github.event.inputs.limit }}"
+          python scripts/gather_figure_info.py --limit ${LIMIT:-5}
+
+      # ─── Step 2: Claude Haiku 脚本生成 ────────────
+      - name: Step2 - Generate long-form scripts
+        if: ${{ github.event.inputs.step == 'all' || github.event.inputs.step == 'generate_only' }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          LIMIT="${{ github.event.inputs.limit }}"
+          python scripts/generate_long_script.py --limit ${LIMIT:-5}
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::長編動画パイプラインが失敗しました。ログを確認してください。"
