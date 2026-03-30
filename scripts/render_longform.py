@@ -17,6 +17,7 @@ Notionから long_script_ja（longform_status=script_ready）を読み込み、
 import argparse
 import logging
 import os
+import random
 import re
 import subprocess
 import sys
@@ -440,8 +441,8 @@ class LongformRenderer:
             c.close()
         final.close()
 
-        # BGM生成・pydub で正しく混合
-        logger.info("BGM生成・混合中...")
+        # BGM混合
+        logger.info("BGM混合中...")
         tts_gen = TTSGenerator()
 
         # 動画から音声を抽出
@@ -453,8 +454,27 @@ class LongformRenderer:
 
         from pydub import AudioSegment as _AS
         narration_audio = _AS.from_file(narration_wav)
-        bgm = tts_gen._generate_ambient_bgm(len(narration_audio) / 1000.0 + 2.0)
-        bgm = (bgm + (-14.0))[:len(narration_audio)]   # -14dB にクリップ
+
+        # data/bgm/longform/ にMP3があればそちらを使用、なければ合成BGM
+        bgm_dir = Path(__file__).parent.parent / "data" / "bgm" / "longform"
+        bgm_files = list(bgm_dir.glob("*.mp3")) + list(bgm_dir.glob("*.ogg")) if bgm_dir.exists() else []
+
+        if bgm_files:
+            bgm_file = random.choice(bgm_files)
+            logger.info(f"BGMファイル使用: {bgm_file.name}")
+            bgm_raw = _AS.from_file(str(bgm_file))
+            # 動画の長さに合わせてループ or クリップ
+            narration_ms = len(narration_audio)
+            if len(bgm_raw) < narration_ms:
+                # 足りない場合はループ
+                loops = (narration_ms // len(bgm_raw)) + 1
+                bgm_raw = bgm_raw * loops
+            bgm = (bgm_raw + (-14.0))[:narration_ms]
+        else:
+            logger.info("BGMファイルなし → 合成BGMを使用 (data/bgm/longform/ にMP3を置くと差し替え可能)")
+            bgm_seg = tts_gen._generate_ambient_bgm(len(narration_audio) / 1000.0 + 2.0)
+            bgm = (bgm_seg + (-14.0))[:len(narration_audio)]
+
         mixed = narration_audio.overlay(bgm)
         mixed_path = output_path + "_mixed.mp3"
         mixed.export(mixed_path, format="mp3", bitrate="192k")

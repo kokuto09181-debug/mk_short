@@ -1,0 +1,9 @@
+# 長編動画用BGMフォルダ
+
+ここに MP3 / OGG ファイルを置くと render_longform.py が自動的にランダム選択して使用します。
+ファイルがない場合は合成BGMにフォールバックします。
+
+## おすすめ素材サイト
+- YouTube Audio Library: studio.youtube.com → コンテンツ → 音楽ライブラリ
+- Pixabay Music: pixabay.com/music（CC0、帰属不要）
+- Incompetech: incompetech.com（CC BY、帰属表記必要）
