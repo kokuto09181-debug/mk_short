@@ -370,6 +370,8 @@ class NotionFigureClient:
             "script_en": self._get_prop_text(props, "script_en"),
             "research_data": self._get_prop_text(props, "research_data"),
             "long_script_ja": self._get_prop_text(props, "long_script_ja"),
+            "longform_status": self._get_prop_select(props, "longform_status"),
+            "longform_video_id": self._get_prop_text(props, "longform_video_id"),
         }
 
     # ─────────────────────────────────────────
@@ -377,18 +379,20 @@ class NotionFigureClient:
     # ─────────────────────────────────────────
 
     def ensure_longform_properties(self):
-        """research_data / long_script_ja プロパティが DB になければ追加する"""
+        """research_data / long_script_ja / longform_status / longform_video_id プロパティが DB になければ追加する"""
         try:
             resp = self.session.patch(
                 f"{NOTION_API_BASE}/databases/{self.database_id}",
                 json={"properties": {
                     "research_data": {"rich_text": {}},
                     "long_script_ja": {"rich_text": {}},
+                    "longform_status": {"select": {}},
+                    "longform_video_id": {"rich_text": {}},
                 }},
                 timeout=10,
             )
             if resp.ok:
-                logger.info("research_data / long_script_ja プロパティを確認・追加しました")
+                logger.info("longform プロパティを確認・追加しました")
             else:
                 logger.warning(f"longform プロパティの追加に失敗 [{resp.status_code}]: {resp.text[:300]}")
         except Exception as e:
@@ -409,10 +413,11 @@ class NotionFigureClient:
         logger.info(f"research_data 保存完了: page_id={page_id} ({len(clean_text)}文字)")
 
     def save_long_script_ja(self, page_id: str, text: str):
-        """長編動画の脚本テキストをNotionに保存する"""
+        """長編動画の脚本テキストをNotionに保存し、longform_status を script_ready にする"""
         self._patch(f"pages/{page_id}", {
             "properties": {
                 "long_script_ja": {"rich_text": self._split_rich_text(text)},
+                "longform_status": {"select": {"name": "script_ready"}},
             }
         })
         logger.info(f"long_script_ja 保存完了: page_id={page_id}")
@@ -436,6 +441,50 @@ class NotionFigureClient:
         figures = [self._page_to_figure(p) for p in data]
         logger.info(f"long_script 未生成: {len(figures)} 件")
         return figures[:limit]
+
+    def get_figures_ready_for_longform_render(self, limit: int = 5) -> list[dict]:
+        """long_script_ja があり longform_status が空または script_ready の偉人を返す"""
+        data = self.query_figures({
+            "property": "long_script_ja",
+            "rich_text": {"is_not_empty": True},
+        })
+        figures = [self._page_to_figure(p) for p in data]
+        ready = [f for f in figures if f.get("longform_status", "") in ("", "script_ready")]
+        logger.info(f"レンダリング待ち: {len(ready)} 件")
+        return ready[:limit]
+
+    def mark_longform_rendering(self, page_id: str):
+        """レンダリング中フラグを立てる"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {"longform_status": {"select": {"name": "rendering"}}}
+        })
+
+    def mark_longform_render_done(self, page_id: str):
+        """ローカルレンダリング完了（アップロード待ち）"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {"longform_status": {"select": {"name": "render_done"}}}
+        })
+        logger.info(f"longform render_done: page_id={page_id}")
+
+    def mark_longform_render_error(self, page_id: str, error_msg: str = ""):
+        """レンダリングエラーを記録する"""
+        self._ensure_error_log_property()
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "longform_status": {"select": {"name": "render_error"}},
+                "error_log": {"rich_text": [{"text": {"content": error_msg[:2000]}}]},
+            }
+        })
+
+    def save_longform_video_id(self, page_id: str, video_id: str):
+        """長編動画のYouTube動画IDを保存し、ステータスを uploaded にする"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "longform_video_id": {"rich_text": [{"text": {"content": video_id}}]},
+                "longform_status": {"select": {"name": "uploaded"}},
+            }
+        })
+        logger.info(f"longform_video_id 保存: page_id={page_id}, video_id={video_id}")
 
     # ─────────────────────────────────────────
     # DB 初期セットアップ

@@ -210,6 +210,9 @@ class Pipeline:
                     ["ancient Japan", "traditional"], img_dir, count=3
                 )
 
+            # 長編動画IDがあればショートの末尾に「続きはこちら」を追加
+            longform_video_id = figure.get("longform_video_id", "") or ""
+
             # 3. 日本語動画生成
             jp_video_id = self._produce_and_upload(
                 script=script_ja,
@@ -218,6 +221,7 @@ class Pipeline:
                 portrait_path=portrait_path,
                 work_dir=os.path.join(work_dir, "ja"),
                 language="ja",
+                longform_video_id=longform_video_id,
             )
 
             # 4. 英語動画生成
@@ -264,6 +268,7 @@ class Pipeline:
         work_dir: str,
         language: str,
         portrait_path: Optional[str] = None,
+        longform_video_id: str = "",
     ) -> str:
         """TTS → 動画生成 → YouTube アップロード。video_id を返す"""
         os.makedirs(work_dir, exist_ok=True)
@@ -291,6 +296,7 @@ class Pipeline:
             output_path=video_path,
             narration=narration,
             portrait_path=portrait_path,
+            longform_video_id=longform_video_id if language == "ja" else "",
         )
 
         # サムネイル
@@ -303,7 +309,9 @@ class Pipeline:
 
         # YouTube アップロード
         uploader = self.uploader_jp if language == "ja" else self.uploader_en
-        description = self.generator.build_description(script)
+        description = self.generator.build_description(
+            script, longform_video_id=longform_video_id if language == "ja" else ""
+        )
 
         try:
             video_id = uploader.upload(

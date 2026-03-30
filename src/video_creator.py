@@ -403,6 +403,33 @@ class VideoCreator:
                 sy += line_h
         return np.array(img)
 
+    def _overlay_end_card(self, frame: np.ndarray, video_id: str) -> np.ndarray:
+        """末尾数秒に「続きはこちら！」エンドカードを描画する"""
+        img = Image.fromarray(frame)
+        rgba = img.convert("RGBA")
+        overlay = Image.new("RGBA", rgba.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+
+        card_h = 210
+        card_top = self.height - card_h - 15
+        draw.rectangle([(0, card_top), (self.width, self.height)], fill=(0, 0, 0, 210))
+
+        font_large = self._get_font(64)
+        text = "続きはこちら！"
+        bbox = font_large.getbbox(text)
+        x = (self.width - (bbox[2] - bbox[0])) // 2
+        draw.text((x + 2, card_top + 20), text, font=font_large, fill=(0, 0, 0, 180))
+        draw.text((x, card_top + 18), text, font=font_large, fill=(255, 215, 80, 255))
+
+        font_small = self._get_font(44)
+        url_text = f"▶ youtu.be/{video_id}"
+        bbox2 = font_small.getbbox(url_text)
+        ux = (self.width - (bbox2[2] - bbox2[0])) // 2
+        draw.text((ux + 1, card_top + 105), url_text, font=font_small, fill=(0, 0, 0, 160))
+        draw.text((ux, card_top + 103), url_text, font=font_small, fill=(180, 210, 255, 255))
+
+        return np.array(Image.alpha_composite(rgba, overlay).convert("RGB"))
+
     def create_video(
         self,
         script: dict,
@@ -411,6 +438,7 @@ class VideoCreator:
         output_path: str,
         narration: str = "",
         portrait_path: Optional[str] = None,
+        longform_video_id: Optional[str] = None,
     ) -> str:
         """動画を生成して output_path に保存する"""
         from moviepy.editor import AudioFileClip, VideoClip
@@ -459,6 +487,7 @@ class VideoCreator:
 
         accent = list(theme["accent_color"])
         bar_y = self.height - 12
+        end_card_start = total_duration - 3.5
 
         def make_frame(t: float) -> np.ndarray:
             section_idx = min(int(t / section_duration), num_sections - 1)
@@ -470,17 +499,22 @@ class VideoCreator:
             # フェードイン中（各セクション先頭0.5秒）はフル描画
             if section_progress < 1.0:
                 bg = image_paths[section_idx % len(image_paths)] if image_paths else None
-                return self.create_frame(
+                frame = self.create_frame(
                     script, section_idx, portrait_path, bg, theme,
                     progress, subtitle, section_progress,
                 )
+            else:
+                # フェードイン完了後: キャッシュ済みフレームをコピーしてプログレスバーのみ更新
+                frame = get_subtitled_frame(section_idx, subtitle).copy()
+                frame[bar_y:, :] = [30, 30, 30]
+                pw = int(self.width * progress)
+                if pw > 0:
+                    frame[bar_y:, :pw] = accent
 
-            # フェードイン完了後: キャッシュ済みフレームをコピーしてプログレスバーのみ更新
-            frame = get_subtitled_frame(section_idx, subtitle).copy()
-            frame[bar_y:, :] = [30, 30, 30]
-            pw = int(self.width * progress)
-            if pw > 0:
-                frame[bar_y:, :pw] = accent
+            # 末尾3.5秒: エンドカードを重ねる
+            if longform_video_id and t >= end_card_start:
+                frame = self._overlay_end_card(frame, longform_video_id)
+
             return frame
 
         video = VideoClip(make_frame=make_frame, duration=total_duration)

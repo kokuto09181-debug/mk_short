@@ -1,0 +1,83 @@
+name: Long-form Video Upload
+
+on:
+  # 毎日 JST 06:00 に自動実行（UTC 21:00 前日）
+  # render → upload を通しで実行する
+  schedule:
+    - cron: "0 21 * * *"   # JST 06:00
+
+  # 手動トリガー（ステップ選択可能）
+  workflow_dispatch:
+    inputs:
+      step:
+        description: "実行ステップ"
+        type: choice
+        options:
+          - "all"           # レンダリング → アップロード
+          - "render_only"   # レンダリングのみ（Notionに render_done を書く）
+          - "upload_only"   # アップロードのみ（render_done 状態の動画を対象）
+        default: "all"
+      limit:
+        description: "最大処理件数（デフォルト: 3）"
+        type: string
+        default: "3"
+
+env:
+  PYTHONUNBUFFERED: "1"
+  TZ: "Asia/Tokyo"
+
+jobs:
+  longform-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # 長編レンダリングは時間がかかるため6時間
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-vlgothic
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ─── Step 1: レンダリング ────────────────────
+      - name: Step1 - Render long-form videos
+        if: >
+          github.event_name == 'schedule' ||
+          github.event.inputs.step == 'all' ||
+          github.event.inputs.step == 'render_only'
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: |
+          LIMIT="${{ github.event.inputs.limit }}"
+          python scripts/render_longform.py --limit ${LIMIT:-3}
+
+      # ─── Step 2: アップロード（スケジュール配信）───
+      - name: Step2 - Upload and schedule
+        if: >
+          github.event_name == 'schedule' ||
+          github.event.inputs.step == 'all' ||
+          github.event.inputs.step == 'upload_only'
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          YOUTUBE_TOKEN_JSON_JP: ${{ secrets.YOUTUBE_TOKEN_JSON_JP }}
+        run: |
+          LIMIT="${{ github.event.inputs.limit }}"
+          python scripts/upload_longform.py --limit ${LIMIT:-3}
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::長編動画アップロードパイプラインが失敗しました。ログを確認してください。"

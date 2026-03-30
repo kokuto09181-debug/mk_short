@@ -152,7 +152,7 @@ class ContentGenerator:
         sep = "。" if script.get("language") == "ja" else " "
         return sep.join(p for p in parts if p)
 
-    def build_description(self, script: dict, extra_tags: list[str] = None) -> str:
+    def build_description(self, script: dict, extra_tags: list[str] = None, longform_video_id: str = "") -> str:
         """YouTube動画説明文を組み立てる（出典・参考リンク含む）"""
         desc = script.get("description", "")
         lang = script.get("language", "ja")
@@ -184,8 +184,12 @@ class ContentGenerator:
         if sources_lines:
             sources_block = f"\n\n{sources_header}\n" + "\n".join(sources_lines)
 
+        longform_block = ""
+        if longform_video_id and lang == "ja":
+            longform_block = f"\n\n▶ 続きの長編動画はこちら\nhttps://youtu.be/{longform_video_id}"
+
         all_tags = base_tags + (extra_tags or [])
-        return f"{desc}{sources_block}\n\n{' '.join(all_tags)}"
+        return f"{desc}{longform_block}{sources_block}\n\n{' '.join(all_tags)}"
 
 
 if __name__ == "__main__":

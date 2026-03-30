@@ -97,27 +97,28 @@ class TTSGenerator:
         n = int(sample_rate * duration_sec)
         t = np.linspace(0, duration_sec, n, endpoint=False)
 
-        # D マイナーペンタトニック低音域 (D2, F2, G2, A2, C3, D3)
-        notes = [73.4, 87.3, 98.0, 110.0, 130.8, 146.8]
+        # D マイナーペンタトニック（D3〜D4: スピーカーで聴こえる可聴域）
+        # D3, F3, G3, A3, C4, D4
+        notes = [146.8, 174.6, 196.0, 220.0, 261.6, 293.7]
         signal = np.zeros(n, dtype=np.float64)
 
         rng = np.random.default_rng(42)
         for i, freq in enumerate(notes):
             # 各音ごとに異なる周波数・位相でゆっくり振幅変調
-            mod_rate = 0.07 + i * 0.011
+            mod_rate = 0.05 + i * 0.009
             mod_phase = i * 0.9
             envelope = 0.55 + 0.45 * np.sin(2 * np.pi * mod_rate * t + mod_phase)
 
-            amp = 0.038 / len(notes)
+            amp = 0.07 / len(notes)
             # 基音 + 2倍音 + 3倍音（自然な倍音列）
             signal += amp * envelope * (
                 np.sin(2 * np.pi * freq * t)
-                + 0.45 * np.sin(2 * np.pi * freq * 2 * t)
-                + 0.15 * np.sin(2 * np.pi * freq * 3 * t)
+                + 0.40 * np.sin(2 * np.pi * freq * 2 * t)
+                + 0.12 * np.sin(2 * np.pi * freq * 3 * t)
             )
 
-        # 空間的テクスチャ（非常に低レベルのホワイトノイズ）
-        signal += 0.002 * rng.standard_normal(n)
+        # 極めて微量のホワイトノイズ（空間テクスチャ・主音を邪魔しないレベル）
+        signal += 0.0003 * rng.standard_normal(n)
 
         # 正規化
         max_amp = np.max(np.abs(signal))

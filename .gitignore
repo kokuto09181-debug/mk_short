@@ -25,3 +25,13 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Claude Code
+.claude/
+
+# 生成データ（レンダリング済み動画・素材）
+data/longform_output/
+data/longform_test/
+
+# YouTube OAuth トークン（scripts 配下）
+scripts/youtube_token*.json

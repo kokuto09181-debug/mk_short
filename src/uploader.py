@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -110,9 +111,11 @@ class YouTubeUploader:
         description: str,
         thumbnail_path: Optional[str] = None,
         tags: Optional[list[str]] = None,
+        publish_at: Optional[datetime] = None,
     ) -> str:
         """
         動画をYouTubeにアップロードして動画IDを返す。
+        publish_at を指定するとスケジュール配信（指定時刻に自動公開）になる。
         失敗時は最大3回リトライ。
         """
         service = self._build_service()
@@ -120,6 +123,23 @@ class YouTubeUploader:
         combined_tags = (self.channel_config.get("tags") or []) + (tags or [])
         category_id = self.channel_config.get("default_category", "27")
         language = self.channel_config.get("language", "ja")
+
+        if publish_at is not None:
+            # スケジュール配信: private + publishAt で指定時刻に自動公開
+            publish_time = publish_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            status = {
+                "privacyStatus": "private",
+                "publishAt": publish_time,
+                "madeForKids": self.upload_config.get("made_for_kids", False),
+                "selfDeclaredMadeForKids": False,
+            }
+            logger.info(f"スケジュール配信: {publish_time} (UTC)")
+        else:
+            status = {
+                "privacyStatus": self.upload_config.get("privacy", "public"),
+                "madeForKids": self.upload_config.get("made_for_kids", False),
+                "selfDeclaredMadeForKids": False,
+            }
 
         body = {
             "snippet": {
@@ -130,11 +150,7 @@ class YouTubeUploader:
                 "defaultLanguage": language,
                 "defaultAudioLanguage": language,
             },
-            "status": {
-                "privacyStatus": self.upload_config.get("privacy", "public"),
-                "madeForKids": self.upload_config.get("made_for_kids", False),
-                "selfDeclaredMadeForKids": False,
-            },
+            "status": status,
         }
 
         media = MediaFileUpload(
