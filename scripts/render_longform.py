@@ -463,10 +463,22 @@ class LongformRenderer:
             bgm_file = random.choice(bgm_files)
             logger.info(f"BGMファイル使用: {bgm_file.name}")
             bgm_raw = _AS.from_file(str(bgm_file))
+
+            # サンプルレート・チャンネル数をナレーションに合わせる（不一致によるノイズ防止）
+            bgm_raw = bgm_raw.set_frame_rate(narration_audio.frame_rate)
+            bgm_raw = bgm_raw.set_channels(narration_audio.channels)
+            bgm_raw = bgm_raw.set_sample_width(narration_audio.sample_width)
+
+            # 冒頭の無音区間を除去（BGMファイルの先頭無音が「切れた」に見えるのを防ぐ）
+            from pydub.silence import detect_leading_silence
+            leading_ms = detect_leading_silence(bgm_raw, silence_threshold=-50)
+            if leading_ms > 0:
+                bgm_raw = bgm_raw[leading_ms:]
+                logger.info(f"BGM冒頭の無音 {leading_ms}ms を除去")
+
             # 動画の長さに合わせてループ or クリップ
             narration_ms = len(narration_audio)
             if len(bgm_raw) < narration_ms:
-                # 足りない場合はループ
                 loops = (narration_ms // len(bgm_raw)) + 1
                 bgm_raw = bgm_raw * loops
             bgm = (bgm_raw + (-14.0))[:narration_ms]
