@@ -437,11 +437,6 @@ class NotionFigureClient:
         logger.info(f"long_script 未生成: {len(figures)} 件")
         return figures[:limit]
 
-    @staticmethod
-    def _split_rich_text(text: str, chunk_size: int = 2000) -> list:
-        """長いテキストをNotionのrich_textブロックリストに分割する"""
-        return [{"text": {"content": text[i:i+chunk_size]}} for i in range(0, len(text), chunk_size)]
-
     # ─────────────────────────────────────────
     # DB 初期セットアップ
     # ─────────────────────────────────────────
