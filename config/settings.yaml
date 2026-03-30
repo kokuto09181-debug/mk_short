@@ -16,7 +16,7 @@ channels:
     tags: ["Japanese history", "samurai", "hidden heroes", "Japan", "shorts"]
 
 content:
-  videos_per_day: 3          # 1言語あたり3本（合計6本/日）
+  videos_per_day: 1          # 1言語あたり1本（合計2本/日: 日本語+英語）
   languages: ["ja", "en"]
 
   # ニッチな分野（有名武将は避ける）
@@ -101,9 +101,7 @@ upload:
   made_for_kids: false
   notify_subscribers: true
   schedule_times_jst:
-    - "07:00"
-    - "12:30"
-    - "20:00"
+    - "19:00"   # 長編動画の配信スケジュール（JST）
 
 ai:
   model: "claude-haiku-4-5-20251001"
