@@ -397,11 +397,11 @@ class NotionFigureClient:
         })
         logger.info(f"research_data 保存完了: page_id={page_id} ({len(research_text)}文字)")
 
-    def save_long_script_ja(self, page_id: str, long_script_ja_json: str):
-        """長編動画の脚本JSONをNotionに保存する"""
+    def save_long_script_ja(self, page_id: str, text: str):
+        """長編動画の脚本テキストをNotionに保存する"""
         self._patch(f"pages/{page_id}", {
             "properties": {
-                "long_script_ja": {"rich_text": self._split_rich_text(long_script_ja_json)},
+                "long_script_ja": {"rich_text": self._split_rich_text(text)},
             }
         })
         logger.info(f"long_script_ja 保存完了: page_id={page_id}")
@@ -425,6 +425,11 @@ class NotionFigureClient:
         figures = [self._page_to_figure(p) for p in data]
         logger.info(f"long_script 未生成: {len(figures)} 件")
         return figures[:limit]
+
+    @staticmethod
+    def _split_rich_text(text: str, chunk_size: int = 2000) -> list:
+        """長いテキストをNotionのrich_textブロックリストに分割する"""
+        return [{"text": {"content": text[i:i+chunk_size]}} for i in range(0, len(text), chunk_size)]
 
     # ─────────────────────────────────────────
     # DB 初期セットアップ
