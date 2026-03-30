@@ -429,11 +429,18 @@ class LongformRenderer:
 
         logger.info(f"動画書き出し中... ({total_duration:.1f}秒、{total_duration/60:.1f}分)")
         if use_gpu:
-            final.write_videofile(
-                nobgm_path, codec="h264_nvenc",
-                ffmpeg_params=["-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"],
-                **write_kw,
-            )
+            try:
+                final.write_videofile(
+                    nobgm_path, codec="h264_nvenc",
+                    ffmpeg_params=["-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"],
+                    **write_kw,
+                )
+            except Exception as gpu_err:
+                logger.warning(f"h264_nvenc失敗 ({gpu_err.__class__.__name__})、libx264にフォールバック")
+                import shutil
+                if os.path.exists(nobgm_path):
+                    os.remove(nobgm_path)
+                final.write_videofile(nobgm_path, codec="libx264", preset="fast", **write_kw)
         else:
             final.write_videofile(nobgm_path, codec="libx264", preset="fast", **write_kw)
 
@@ -514,14 +521,17 @@ class LongformRenderer:
 # メイン処理
 # ─────────────────────────────────────────
 
-def run(limit: int = 5):
+def run(limit: int = 5, name: str = ""):
     notion = NotionFigureClient()
     notion.ensure_longform_properties()
     tts = TTSGenerator()
     img_fetcher = ImageFetcher()
     renderer = LongformRenderer()
 
-    figures = notion.get_figures_ready_for_longform_render(limit=limit)
+    fetch_limit = 100 if name else limit
+    figures = notion.get_figures_ready_for_longform_render(limit=fetch_limit)
+    if name:
+        figures = [f for f in figures if f.get("name_ja") == name]
     if not figures:
         logger.info("レンダリング対象なし。完了。")
         return
@@ -608,5 +618,6 @@ def run(limit: int = 5):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="長編動画ローカルレンダリング")
     parser.add_argument("--limit", type=int, default=5, help="最大処理件数（デフォルト: 5）")
+    parser.add_argument("--name", type=str, default="", help="特定の偉人名（日本語）を指定して1件のみ処理")
     args = parser.parse_args()
-    run(limit=args.limit)
+    run(limit=args.limit, name=args.name)

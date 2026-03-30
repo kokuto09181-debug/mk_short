@@ -121,7 +121,7 @@ class Pipeline:
     # メイン実行
     # ─────────────────────────────────────────
 
-    def run_daily(self, videos_per_day: Optional[int] = None):
+    def run_daily(self, videos_per_day: Optional[int] = None, name_filter: str = ""):
         """1日分の動画を生成・投稿する"""
         n = videos_per_day or self.config["content"]["videos_per_day"]
         logger.info(f"=== パイプライン開始: {n}本 × 日英2チャンネル ===")
@@ -140,7 +140,10 @@ class Pipeline:
         self._ensure_figure_stock(needed=n)
 
         # 未制作の偉人を取得
-        figures = self.notion.get_pending_figures(limit=n)
+        fetch_limit = 100 if name_filter else n
+        figures = self.notion.get_pending_figures(limit=fetch_limit)
+        if name_filter:
+            figures = [f for f in figures if f.get("name_ja") == name_filter]
         if not figures:
             logger.error("pending の偉人が見つかりません。シードデータを登録してください。")
             return
@@ -506,6 +509,7 @@ if __name__ == "__main__":
     run_parser = subparsers.add_parser("run", help="動画を生成してアップロード")
     run_parser.add_argument("--dry-run", action="store_true", help="アップロードをスキップ")
     run_parser.add_argument("--count", type=int, help="生成本数（デフォルト: 設定値）")
+    run_parser.add_argument("--name", type=str, default="", help="特定の偉人名（日本語）を指定して1件のみ処理")
 
     # seed: Notionにシードデータ投入
     seed_parser = subparsers.add_parser("seed", help="Notionに偉人シードデータを投入")
@@ -518,7 +522,7 @@ if __name__ == "__main__":
 
     if args.command == "run":
         pipeline = Pipeline(dry_run=args.dry_run)
-        pipeline.run_daily(videos_per_day=args.count)
+        pipeline.run_daily(videos_per_day=args.count, name_filter=getattr(args, "name", ""))
 
     elif args.command == "seed":
         pipeline = Pipeline(dry_run=True)

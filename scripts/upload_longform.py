@@ -114,7 +114,7 @@ def parse_title_and_description(long_script: str) -> tuple:
     return title, description, tags_str
 
 
-def run(limit: int = 3):
+def run(limit: int = 3, name: str = ""):
     notion = NotionFigureClient()
     config = load_config()
     schedule_times = config["upload"]["schedule_times_jst"]
@@ -124,7 +124,11 @@ def run(limit: int = 3):
         "property": "longform_status",
         "select": {"equals": "render_done"},
     })
-    figures = [notion._page_to_figure(p) for p in data]
+    all_figures = [notion._page_to_figure(p) for p in data]
+    if name:
+        figures = [f for f in all_figures if f.get("name_ja") == name]
+    else:
+        figures = all_figures
     logger.info(f"アップロード待ち: {len(figures)} 件")
 
     if not figures:
@@ -209,5 +213,6 @@ def run(limit: int = 3):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="長編動画スケジュールアップロード")
     parser.add_argument("--limit", type=int, default=3, help="最大処理件数（デフォルト: 3）")
+    parser.add_argument("--name", type=str, default="", help="特定の偉人名（日本語）を指定して1件のみ処理")
     args = parser.parse_args()
-    run(limit=args.limit)
+    run(limit=args.limit, name=args.name)

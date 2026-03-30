@@ -525,15 +525,30 @@ class VideoCreator:
         use_gpu = os.environ.get("USE_GPU_ENCODER", "").lower() in ("1", "true", "yes")
         if use_gpu:
             logger.info("エンコーダー: h264_nvenc (GPU)")
-            video.write_videofile(
-                output_path,
-                fps=self.fps,
-                codec="h264_nvenc",
-                audio_codec="aac",
-                ffmpeg_params=["-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"],
-                threads=8,
-                logger=None,
-            )
+            try:
+                video.write_videofile(
+                    output_path,
+                    fps=self.fps,
+                    codec="h264_nvenc",
+                    audio_codec="aac",
+                    ffmpeg_params=["-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"],
+                    threads=8,
+                    logger=None,
+                )
+            except Exception as gpu_err:
+                logger.warning(f"h264_nvenc失敗 ({gpu_err.__class__.__name__})、libx264にフォールバック")
+                import shutil
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                video.write_videofile(
+                    output_path,
+                    fps=self.fps,
+                    codec="libx264",
+                    audio_codec="aac",
+                    preset="fast",
+                    threads=4,
+                    logger=None,
+                )
         else:
             logger.info("エンコーダー: libx264 (CPU)")
             video.write_videofile(
