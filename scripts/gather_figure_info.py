@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 WIKI_JA_API = "https://ja.wikipedia.org/w/api.php"
 WIKI_EN_API = "https://en.wikipedia.org/w/api.php"
+WIKI_HEADERS = {"User-Agent": "mk_short/1.0 (https://github.com/kokuto09181-debug/mk_short; research bot)"}
 
 RELATED_ARTICLE_COUNT = 5    # 関連記事の最大取得件数
 RELATED_ARTICLE_CHARS = 8000 # 関連記事1件あたりの最大文字数
@@ -57,7 +58,7 @@ def fetch_wikipedia_extract(title: str, lang: str = "ja") -> str:
         "redirects": True,
     }
     try:
-        resp = requests.get(api_url, params=params, timeout=20)
+        resp = requests.get(api_url, params=params, headers=WIKI_HEADERS, timeout=20)
         resp.raise_for_status()
         data = resp.json()
         pages = data.get("query", {}).get("pages", {})
@@ -81,7 +82,7 @@ def search_wikipedia(query: str, lang: str = "ja") -> str:
         "format": "json",
     }
     try:
-        resp = requests.get(api_url, params=params, timeout=15)
+        resp = requests.get(api_url, params=params, headers=WIKI_HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         results = data.get("query", {}).get("search", [])
@@ -104,7 +105,7 @@ def fetch_related_article_titles(title: str, count: int = 10) -> list[str]:
         "redirects": True,
     }
     try:
-        resp = requests.get(WIKI_JA_API, params=params, timeout=15)
+        resp = requests.get(WIKI_JA_API, params=params, headers=WIKI_HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         pages = data.get("query", {}).get("pages", {})
@@ -202,6 +203,11 @@ def gather_figure_info(figure: dict) -> str:
             total_chars += len(rel_text)
             fetched_count += 1
             logger.info(f"  関連記事「{rel_title}」: {len(rel_text)}文字使用")
+
+    # Wikipedia本文が1件も取得できていない場合は空文字を返す（保存しない）
+    if not ja_extract:
+        logger.warning(f"  Wikipedia本文なし。保存スキップ: {name_ja}")
+        return ""
 
     result = "\n".join(lines)
     logger.info(f"  合計: {len(result)}文字")
