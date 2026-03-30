@@ -57,6 +57,8 @@ class NotionFigureClient:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
     def _patch(self, endpoint: str, payload: dict) -> dict:
         resp = self.session.patch(f"{NOTION_API_BASE}/{endpoint}", json=payload, timeout=15)
+        if not resp.ok:
+            logger.error(f"Notion PATCH エラー {resp.status_code}: {resp.text[:500]}")
         resp.raise_for_status()
         return resp.json()
 
