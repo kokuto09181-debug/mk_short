@@ -112,12 +112,22 @@ def fetch_related_article_titles(title: str, count: int = 10) -> list[str]:
         for page_data in pages.values():
             links = page_data.get("links", [])
             titles = [l["title"] for l in links]
-            # 曖昧さ回避ページ・カテゴリ系を除外し、適度な長さのタイトルのみ
-            filtered = [
-                t for t in titles
-                if not any(skip in t for skip in ["曖昧さ回避", "一覧", "Category", "Wikipedia"])
-                and 2 <= len(t) <= 20
-            ]
+            import re
+            filtered = []
+            for t in titles:
+                # 除外: 年号・日付・数字のみ・曖昧さ回避・一覧・カテゴリ系
+                if re.fullmatch(r'\d+年?', t):          # 「1580」「1580年」
+                    continue
+                if re.fullmatch(r'\d+月\d+日.*', t):   # 「10月24日」「12月5日 (旧暦)」
+                    continue
+                if re.fullmatch(r'\d+世紀.*', t):       # 「17世紀」
+                    continue
+                if any(skip in t for skip in ["曖昧さ回避", "一覧", "Category", "Wikipedia",
+                                               "ノート", "利用者", "Help", "Portal"]):
+                    continue
+                if len(t) < 3 or len(t) > 25:
+                    continue
+                filtered.append(t)
             return filtered[:count]
     except Exception as e:
         logger.warning(f"関連記事リンク取得失敗: {title}: {e}")
