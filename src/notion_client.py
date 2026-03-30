@@ -58,7 +58,7 @@ class NotionFigureClient:
     def _patch(self, endpoint: str, payload: dict) -> dict:
         resp = self.session.patch(f"{NOTION_API_BASE}/{endpoint}", json=payload, timeout=15)
         if not resp.ok:
-            logger.error(f"Notion PATCH エラー {resp.status_code}: {resp.text[:500]}")
+            logger.error(f"Notion PATCH エラー [{resp.status_code}] {endpoint}: {resp.text[:500]}")
         resp.raise_for_status()
         return resp.json()
 
@@ -325,8 +325,9 @@ class NotionFigureClient:
     # ─────────────────────────────────────────
 
     @staticmethod
-    def _split_rich_text(text: str, chunk_size: int = 2000) -> list:
-        """長いテキストをNotionのrich_textブロックリストに分割する"""
+    def _split_rich_text(text: str, chunk_size: int = 1900) -> list:
+        """長いテキストをNotionのrich_textブロックリストに分割する
+        Notionはサロゲートペア文字を2文字カウントするため1900字を上限とする"""
         return [{"text": {"content": text[i:i+chunk_size]}} for i in range(0, len(text), chunk_size)]
 
     @staticmethod
@@ -378,7 +379,7 @@ class NotionFigureClient:
     def ensure_longform_properties(self):
         """research_data / long_script_ja プロパティが DB になければ追加する"""
         try:
-            self.session.patch(
+            resp = self.session.patch(
                 f"{NOTION_API_BASE}/databases/{self.database_id}",
                 json={"properties": {
                     "research_data": {"rich_text": {}},
@@ -386,18 +387,26 @@ class NotionFigureClient:
                 }},
                 timeout=10,
             )
-            logger.info("research_data / long_script_ja プロパティを確認・追加しました")
+            if resp.ok:
+                logger.info("research_data / long_script_ja プロパティを確認・追加しました")
+            else:
+                logger.warning(f"longform プロパティの追加に失敗 [{resp.status_code}]: {resp.text[:300]}")
         except Exception as e:
             logger.warning(f"longform プロパティの追加に失敗（無視）: {e}")
 
     def save_research_data(self, page_id: str, research_text: str):
         """Wikipedia等から収集した偉人情報をNotionに保存する"""
+        # Notionが受け付けない制御文字を除去
+        import re
+        clean_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', research_text)
+        # Notionのrich_textプロパティ上限（100ブロック×2000字）に合わせて切り詰め
+        clean_text = clean_text[:180000]
         self._patch(f"pages/{page_id}", {
             "properties": {
-                "research_data": {"rich_text": self._split_rich_text(research_text)},
+                "research_data": {"rich_text": self._split_rich_text(clean_text)},
             }
         })
-        logger.info(f"research_data 保存完了: page_id={page_id} ({len(research_text)}文字)")
+        logger.info(f"research_data 保存完了: page_id={page_id} ({len(clean_text)}文字)")
 
     def save_long_script_ja(self, page_id: str, text: str):
         """長編動画の脚本テキストをNotionに保存する"""

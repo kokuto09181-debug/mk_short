@@ -180,8 +180,26 @@ class TTSGenerator:
 
     def get_duration(self, audio_path: str) -> float:
         """音声ファイルの長さ（秒）を返す"""
-        audio = AudioSegment.from_file(audio_path)
-        return len(audio) / 1000.0
+        try:
+            audio = AudioSegment.from_file(audio_path)
+            return len(audio) / 1000.0
+        except (IndexError, Exception) as e:
+            # pydub が mp3 のストリーム検出に失敗した場合、ffprobe で直接取得
+            logger.warning(f"pydub読み込み失敗、ffprobeで長さを取得: {e}")
+            import subprocess
+            result = subprocess.run(
+                [
+                    "ffprobe", "-v", "quiet",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    audio_path,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return float(result.stdout.strip())
+            raise
 
     def generate_with_speed(self, text: str, output_dir: str) -> tuple[str, float]:
         """音声生成 + 速度調整 + BGM 混合をまとめて実行。(output_path, duration_sec) を返す"""

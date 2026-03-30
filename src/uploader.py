@@ -26,10 +26,8 @@ logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
-    "https://www.googleapis.com/auth/youtube.force-ssl",
-    "https://www.googleapis.com/auth/youtubepartner",
-    "https://www.googleapis.com/auth/youtubepartner-channel-audit",
 ]
 TOKEN_CACHE_PATH = Path(__file__).parent.parent / ".youtube_token.json"
 
@@ -61,13 +59,15 @@ class YouTubeUploader:
         token_env = os.environ.get(f"YOUTUBE_TOKEN_JSON_{suffix}")
         if token_env:
             creds_data = json.loads(token_env)
+            # トークンに記録されたスコープを優先して使用（invalid_scope 防止）
+            token_scopes = creds_data.get("scopes") or SCOPES
             creds = Credentials(
                 token=creds_data.get("token"),
                 refresh_token=creds_data.get("refresh_token"),
                 token_uri=creds_data.get("token_uri", "https://oauth2.googleapis.com/token"),
                 client_id=creds_data.get("client_id"),
                 client_secret=creds_data.get("client_secret"),
-                scopes=SCOPES,
+                scopes=token_scopes,
             )
             if creds.expired and creds.refresh_token:
                 creds.refresh(Request())
