@@ -179,7 +179,7 @@ class NotionFigureClient:
         })
         logger.info(f"台本保存: page_id={page_id}")
 
-    def get_scripts(self, page_id: str) -> tuple[dict | None, dict | None]:
+    def get_scripts(self, page_id: str) -> tuple:
         """NotionページからJSONパース済み台本（日英）を返す。未保存なら(None, None)"""
         import json as _json
         page = self._get(f"pages/{page_id}")
