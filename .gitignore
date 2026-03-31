@@ -26,8 +26,9 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Claude Code
+# Claude Code（設定ファイルは除外、スキル定義は追跡する）
 .claude/
+!.claude/commands/
 
 # 生成データ（レンダリング済み動画・素材）
 data/longform_output/

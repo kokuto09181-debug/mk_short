@@ -372,6 +372,8 @@ class NotionFigureClient:
             "long_script_ja": self._get_prop_text(props, "long_script_ja"),
             "longform_status": self._get_prop_select(props, "longform_status"),
             "longform_video_id": self._get_prop_text(props, "longform_video_id"),
+            "note_status": self._get_prop_select(props, "note_status"),
+            "note_url": self._get_prop_text(props, "note_url"),
         }
 
     # ─────────────────────────────────────────
@@ -379,7 +381,7 @@ class NotionFigureClient:
     # ─────────────────────────────────────────
 
     def ensure_longform_properties(self):
-        """research_data / long_script_ja / longform_status / longform_video_id プロパティが DB になければ追加する"""
+        """長編・note 関連プロパティが DB になければ追加する"""
         try:
             resp = self.session.patch(
                 f"{NOTION_API_BASE}/databases/{self.database_id}",
@@ -388,15 +390,36 @@ class NotionFigureClient:
                     "long_script_ja": {"rich_text": {}},
                     "longform_status": {"select": {}},
                     "longform_video_id": {"rich_text": {}},
+                    "note_status": {"select": {}},
+                    "note_url": {"rich_text": {}},
                 }},
                 timeout=10,
             )
             if resp.ok:
-                logger.info("longform プロパティを確認・追加しました")
+                logger.info("longform/note プロパティを確認・追加しました")
             else:
-                logger.warning(f"longform プロパティの追加に失敗 [{resp.status_code}]: {resp.text[:300]}")
+                logger.warning(f"プロパティの追加に失敗 [{resp.status_code}]: {resp.text[:300]}")
         except Exception as e:
-            logger.warning(f"longform プロパティの追加に失敗（無視）: {e}")
+            logger.warning(f"プロパティの追加に失敗（無視）: {e}")
+
+    def get_figures_ready_for_note(self, limit: int = 10) -> list[dict]:
+        """note 未投稿かつ長編スクリプトが存在する偉人を返す"""
+        data = self.query_figures({"property": "long_script_ja", "rich_text": {"is_not_empty": True}})
+        figures = [self._page_to_figure(p) for p in data]
+        ready = [
+            f for f in figures
+            if f.get("note_status", "") not in ("posted",)
+            and f.get("long_script_ja")
+        ]
+        return ready[:limit]
+
+    def mark_note_posted(self, page_id: str, note_url: str = ""):
+        """note 投稿完了をマーク"""
+        props: dict = {"note_status": {"select": {"name": "posted"}}}
+        if note_url:
+            props["note_url"] = {"rich_text": [{"text": {"content": note_url[:2000]}}]}
+        self._patch(f"pages/{page_id}", {"properties": props})
+        logger.info(f"note 投稿済みマーク: page_id={page_id}, url={note_url}")
 
     def save_research_data(self, page_id: str, research_text: str):
         """Wikipedia等から収集した偉人情報をNotionに保存する"""
