@@ -99,6 +99,79 @@ class ContentGenerator:
         script_en = self.generate_script(figure, language="en")
         return script_ja, script_en
 
+    @staticmethod
+    def _extract_hook_from_longform(long_script_ja: str) -> tuple[str, str]:
+        """長編脚本のHeaderとHookセクションを抽出して返す。(title, hook_text)"""
+        title = ""
+        for line in long_script_ja.splitlines():
+            if line.startswith("タイトル:"):
+                title = line.replace("タイトル:", "").strip()
+                break
+
+        # セクションをセパレータで分割
+        sep = "=============================="
+        parts = long_script_ja.split(sep)
+        for part in parts:
+            stripped = part.strip()
+            if stripped.startswith("【Hook】") or stripped.startswith("【Hook】"):
+                # 見出し行を除いて本文を取得
+                lines = stripped.splitlines()
+                body_lines = [l for l in lines[1:] if l.strip()]
+                return title, "\n".join(body_lines)
+        return title, ""
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+    )
+    def generate_short_from_longform_hook(self, figure: dict, long_script_ja: str) -> dict:
+        """
+        長編脚本のHookセクションをベースに日本語ショート脚本を生成する。
+        longform_video_id が設定済みの場合に使用し、
+        「続きを見たくなる」予告型ショートを作る。
+        """
+        longform_title, hook_text = self._extract_hook_from_longform(long_script_ja)
+        if not hook_text:
+            logger.warning("長編HookセクションをパースできなかったためFallback: 通常ショート脚本生成")
+            return self.generate_script(figure, language="ja")
+
+        prompt_template = self.prompts["script_ja_from_hook"]
+        user_message = prompt_template["user"].format(
+            name_ja=figure.get("name_ja", ""),
+            longform_title=longform_title,
+            hook_text=hook_text,
+        )
+
+        logger.info(f"Hook派生ショート脚本生成 [ja]: {figure.get('name_ja')} (longform_title={longform_title!r})")
+
+        message = self.client.messages.create(
+            model=self.ai_config["model"],
+            max_tokens=self.ai_config["max_tokens"],
+            temperature=self.ai_config["temperature"],
+            system=prompt_template["system"],
+            messages=[{"role": "user", "content": user_message}],
+        )
+
+        raw_text = message.content[0].text.strip()
+        if "```json" in raw_text:
+            raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in raw_text:
+            raw_text = raw_text.split("```")[1].split("```")[0].strip()
+
+        script = json.loads(raw_text)
+        script["language"] = "ja"
+        script["figure_name_ja"] = figure.get("name_ja", "")
+        script["figure_name_en"] = figure.get("name_en", "")
+        script["figure_era"] = figure.get("era", "")
+        script["figure_field"] = figure.get("field", "")
+        script["derived_from_hook"] = True
+
+        logger.info(
+            f"トークン使用: input={message.usage.input_tokens}, "
+            f"output={message.usage.output_tokens}"
+        )
+        return script
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),

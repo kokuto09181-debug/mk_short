@@ -172,25 +172,49 @@ class Pipeline:
 
         work_dir = tempfile.mkdtemp(prefix=f"shorts_{name_ja[:8]}_")
         try:
-            # 1. 脚本生成（日英）- Notionに既存の脚本があれば使う
-            script_ja_json = figure.get("script_ja", "")
-            script_en_json = figure.get("script_en", "")
-            if script_ja_json and script_en_json:
-                try:
-                    script_ja = json.loads(script_ja_json)
-                    script_en = json.loads(script_en_json)
-                    for s, lang in [(script_ja, "ja"), (script_en, "en")]:
-                        s["language"] = lang
-                        s["figure_name_ja"] = figure.get("name_ja", "")
-                        s["figure_name_en"] = figure.get("name_en", "")
-                        s["figure_era"] = figure.get("era", "")
-                        s["figure_field"] = figure.get("field", "")
-                    logger.info(f"Notionの既存脚本を使用: {name_ja}")
-                except (json.JSONDecodeError, KeyError):
-                    logger.warning("脚本JSONのパースに失敗。APIで再生成します")
-                    script_ja, script_en = self.generator.generate_both_languages(figure)
+            # 1. 脚本生成（日英）
+            long_script_ja = figure.get("long_script_ja", "") or ""
+            longform_video_id = figure.get("longform_video_id", "") or ""
+
+            # 長編動画が存在する場合は日本語ショートをHookから派生生成
+            # （既存キャッシュは無視して毎回派生させる）
+            if long_script_ja and longform_video_id:
+                logger.info(f"長編Hookからショート脚本を派生生成: {name_ja}")
+                script_ja = self.generator.generate_short_from_longform_hook(figure, long_script_ja)
+                # 英語は従来通り独立生成（またはNotionキャッシュ使用）
+                script_en_json = figure.get("script_en", "")
+                if script_en_json:
+                    try:
+                        script_en = json.loads(script_en_json)
+                        script_en["language"] = "en"
+                        script_en["figure_name_ja"] = figure.get("name_ja", "")
+                        script_en["figure_name_en"] = figure.get("name_en", "")
+                        script_en["figure_era"] = figure.get("era", "")
+                        script_en["figure_field"] = figure.get("field", "")
+                    except (json.JSONDecodeError, KeyError):
+                        script_en = self.generator.generate_script(figure, language="en")
+                else:
+                    script_en = self.generator.generate_script(figure, language="en")
             else:
-                script_ja, script_en = self.generator.generate_both_languages(figure)
+                # 長編なし: Notionキャッシュがあれば使用、なければ新規生成
+                script_ja_json = figure.get("script_ja", "")
+                script_en_json = figure.get("script_en", "")
+                if script_ja_json and script_en_json:
+                    try:
+                        script_ja = json.loads(script_ja_json)
+                        script_en = json.loads(script_en_json)
+                        for s, lang in [(script_ja, "ja"), (script_en, "en")]:
+                            s["language"] = lang
+                            s["figure_name_ja"] = figure.get("name_ja", "")
+                            s["figure_name_en"] = figure.get("name_en", "")
+                            s["figure_era"] = figure.get("era", "")
+                            s["figure_field"] = figure.get("field", "")
+                        logger.info(f"Notionの既存脚本を使用: {name_ja}")
+                    except (json.JSONDecodeError, KeyError):
+                        logger.warning("脚本JSONのパースに失敗。APIで再生成します")
+                        script_ja, script_en = self.generator.generate_both_languages(figure)
+                else:
+                    script_ja, script_en = self.generator.generate_both_languages(figure)
 
             # 2. 背景画像取得 - まずWikipediaで偉人の実際の画像を取得
             img_dir = os.path.join(work_dir, "images")
@@ -212,9 +236,6 @@ class Pipeline:
                 image_paths = self.image_fetcher.fetch_images(
                     ["ancient Japan", "traditional"], img_dir, count=3
                 )
-
-            # 長編動画IDがあればショートの末尾に「続きはこちら」を追加
-            longform_video_id = figure.get("longform_video_id", "") or ""
 
             # 3. 日本語動画生成
             jp_video_id = self._produce_and_upload(
@@ -323,6 +344,16 @@ class Pipeline:
                 description=description,
                 thumbnail_path=thumb_path,
             )
+
+            # 長編動画リンクをコメントに投稿（日本語のみ）
+            if language == "ja" and longform_video_id and video_id:
+                comment_text = (
+                    f"▶ 続きの長編動画はこちら！\n"
+                    f"https://youtu.be/{longform_video_id}\n\n"
+                    f"この動画の続き・詳しい解説は長編動画でご覧いただけます📺"
+                )
+                uploader.post_comment(video_id, comment_text)
+
             return video_id
         except Exception as upload_err:
             logger.warning(f"[{lang_label}] アップロード失敗。保留フォルダに保存: {upload_err}")

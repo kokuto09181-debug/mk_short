@@ -196,6 +196,32 @@ class YouTubeUploader:
 
         return ""
 
+    def post_comment(self, video_id: str, comment_text: str) -> str:
+        """
+        動画にトップレベルコメントを投稿してコメントIDを返す。
+        コメントはチャンネルオーナーとして投稿されるので
+        YouTube Studioでピン留めできる。
+        """
+        service = self._build_service()
+        try:
+            response = service.commentThreads().insert(
+                part="snippet",
+                body={
+                    "snippet": {
+                        "videoId": video_id,
+                        "topLevelComment": {
+                            "snippet": {"textOriginal": comment_text}
+                        },
+                    }
+                },
+            ).execute()
+            comment_id = response["id"]
+            logger.info(f"コメント投稿完了: video_id={video_id}, comment_id={comment_id}")
+            return comment_id
+        except HttpError as e:
+            logger.warning(f"コメント投稿失敗（スキップ）: {e}")
+            return ""
+
     def _set_thumbnail(self, service, video_id: str, thumbnail_path: str):
         """サムネイルをアップロードする"""
         try:
