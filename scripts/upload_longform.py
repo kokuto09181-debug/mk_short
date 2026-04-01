@@ -119,7 +119,7 @@ def run(limit: int = 3, name: str = ""):
     config = load_config()
     schedule_times = config["upload"]["schedule_times_jst"]
 
-    # render_done の偉人を取得
+    # render_done の偉人を取得（uploading 中のものは除外して2重実行を防止）
     data = notion.query_figures({
         "property": "longform_status",
         "select": {"equals": "render_done"},
@@ -151,12 +151,21 @@ def run(limit: int = 3, name: str = ""):
         work_dir = OUTPUT_DIR / safe_dirname(name_ja)
         video_path = work_dir / "output.mp4"
 
+        # 既に video_id が入っていればスキップ（2重アップロード防止）
+        if figure.get("longform_video_id"):
+            logger.warning(f"既にアップロード済みのためスキップ: {name_ja} (video_id={figure['longform_video_id']})")
+            notion.save_longform_video_id(page_id, figure["longform_video_id"])  # status を uploaded に戻す
+            continue
+
         if not video_path.exists():
             logger.error(f"動画ファイルなし: {video_path}")
             notion.mark_longform_render_error(
                 page_id, f"動画ファイルが見つかりません: {video_path}"
             )
             continue
+
+        # アップロード中フラグを先に立てる（並列実行・再実行による2重アップロード防止）
+        notion.mark_longform_uploading(page_id)
 
         logger.info(
             f"アップロード: {name_ja}"
@@ -205,7 +214,14 @@ def run(limit: int = 3, name: str = ""):
             )
         except Exception as e:
             logger.error(f"アップロード失敗: {name_ja}: {e}")
-            notion.mark_longform_render_error(page_id, f"アップロード失敗: {str(e)[:400]}")
+            # uploading → render_done に戻して次回再試行できるようにする（render_error にしない）
+            notion._ensure_error_log_property()
+            notion._patch(f"pages/{page_id}", {
+                "properties": {
+                    "longform_status": {"select": {"name": "render_done"}},
+                    "error_log": {"rich_text": [{"text": {"content": f"アップロード失敗: {str(e)[:400]}"}}]},
+                }
+            })
 
     logger.info(f"=== 完了: {success}/{len(figures)} 件 ===")
 

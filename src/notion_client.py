@@ -374,6 +374,7 @@ class NotionFigureClient:
             "longform_video_id": self._get_prop_text(props, "longform_video_id"),
             "note_status": self._get_prop_select(props, "note_status"),
             "note_url": self._get_prop_text(props, "note_url"),
+            "note_article": self._get_prop_text(props, "note_article"),
         }
 
     # ─────────────────────────────────────────
@@ -392,6 +393,7 @@ class NotionFigureClient:
                     "longform_video_id": {"rich_text": {}},
                     "note_status": {"select": {}},
                     "note_url": {"rich_text": {}},
+                    "note_article": {"rich_text": {}},
                 }},
                 timeout=10,
             )
@@ -411,6 +413,30 @@ class NotionFigureClient:
             if f.get("note_status", "") not in ("posted",)
             and f.get("long_script_ja")
         ]
+        return ready[:limit]
+
+    def save_note_article(self, page_id: str, article_text: str):
+        """生成したnote記事テキストをNotionに保存し、note_status を article_ready にする"""
+        import re
+        clean_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', article_text)
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "note_article": {"rich_text": self._split_rich_text(clean_text)},
+                "note_status": {"select": {"name": "article_ready"}},
+            }
+        })
+        logger.info(f"note_article 保存完了: page_id={page_id} ({len(clean_text)}文字)")
+
+    def get_figures_ready_for_note_article(self, limit: int = 5) -> list[dict]:
+        """long_script_ja あり・note_article 未生成の偉人を返す"""
+        data = self.query_figures({"property": "long_script_ja", "rich_text": {"is_not_empty": True}})
+        figures = [self._page_to_figure(p) for p in data]
+        ready = [
+            f for f in figures
+            if f.get("note_status", "") not in ("article_ready", "posted")
+            and f.get("long_script_ja")
+        ]
+        logger.info(f"note記事生成待ち: {len(ready)} 件")
         return ready[:limit]
 
     def mark_note_posted(self, page_id: str, note_url: str = ""):
@@ -480,6 +506,12 @@ class NotionFigureClient:
         """レンダリング中フラグを立てる"""
         self._patch(f"pages/{page_id}", {
             "properties": {"longform_status": {"select": {"name": "rendering"}}}
+        })
+
+    def mark_longform_uploading(self, page_id: str):
+        """アップロード開始をマーク（2重アップロード防止）"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {"longform_status": {"select": {"name": "uploading"}}}
         })
 
     def mark_longform_render_done(self, page_id: str):
