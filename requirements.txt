@@ -33,3 +33,4 @@ tenacity>=8.2.3
 # 音声処理
 ffmpeg-python>=0.2.0
 
+ollama

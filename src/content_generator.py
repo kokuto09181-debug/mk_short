@@ -11,9 +11,10 @@ import random
 from pathlib import Path
 from typing import Optional
 
-import anthropic
 import yaml
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+from llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +32,11 @@ def load_prompts() -> dict:
 
 
 class ContentGenerator:
-    def __init__(self, api_key: Optional[str] = None):
-        self.client = anthropic.Anthropic(
-            api_key=api_key or os.environ["ANTHROPIC_API_KEY"]
-        )
+    def __init__(self, api_key: Optional[str] = None, backend: Optional[str] = None):
         self.config = load_config()
         self.prompts = load_prompts()
         self.ai_config = self.config["ai"]
+        self.client = LLMClient(backend=backend, api_key=api_key)
 
     @retry(
         stop=stop_after_attempt(3),
@@ -63,15 +62,14 @@ class ContentGenerator:
 
         logger.info(f"脚本生成 [{language}]: {figure.get('name_ja')} / {figure.get('name_en')}")
 
-        message = self.client.messages.create(
-            model=self.ai_config["model"],
-            max_tokens=self.ai_config["max_tokens"],
-            temperature=self.ai_config["temperature"],
+        resp = self.client.create(
             system=prompt_template["system"],
             messages=[{"role": "user", "content": user_message}],
+            max_tokens=self.ai_config["max_tokens"],
+            temperature=self.ai_config["temperature"],
         )
 
-        raw_text = message.content[0].text.strip()
+        raw_text = resp.text
 
         # JSONブロックの抽出
         if "```json" in raw_text:
@@ -86,11 +84,7 @@ class ContentGenerator:
         script["figure_era"] = figure.get("era", "")
         script["figure_field"] = figure.get("field", "")
 
-        logger.info(
-            f"トークン使用: input={message.usage.input_tokens}, "
-            f"output={message.usage.output_tokens}"
-        )
-
+        logger.info(f"トークン使用: input={resp.input_tokens}, output={resp.output_tokens}")
         return script
 
     def generate_both_languages(self, figure: dict) -> tuple[dict, dict]:
@@ -144,15 +138,14 @@ class ContentGenerator:
 
         logger.info(f"Hook派生ショート脚本生成 [ja]: {figure.get('name_ja')} (longform_title={longform_title!r})")
 
-        message = self.client.messages.create(
-            model=self.ai_config["model"],
-            max_tokens=self.ai_config["max_tokens"],
-            temperature=self.ai_config["temperature"],
+        resp = self.client.create(
             system=prompt_template["system"],
             messages=[{"role": "user", "content": user_message}],
+            max_tokens=self.ai_config["max_tokens"],
+            temperature=self.ai_config["temperature"],
         )
 
-        raw_text = message.content[0].text.strip()
+        raw_text = resp.text
         if "```json" in raw_text:
             raw_text = raw_text.split("```json")[1].split("```")[0].strip()
         elif "```" in raw_text:
@@ -166,10 +159,7 @@ class ContentGenerator:
         script["figure_field"] = figure.get("field", "")
         script["derived_from_hook"] = True
 
-        logger.info(
-            f"トークン使用: input={message.usage.input_tokens}, "
-            f"output={message.usage.output_tokens}"
-        )
+        logger.info(f"トークン使用: input={resp.input_tokens}, output={resp.output_tokens}")
         return script
 
     @retry(
@@ -196,15 +186,14 @@ class ContentGenerator:
 
         logger.info(f"偉人候補生成: field={field}, era={era_range}, count={count}")
 
-        message = self.client.messages.create(
-            model=self.ai_config["model"],
-            max_tokens=3000,
-            temperature=0.9,
+        resp = self.client.create(
             system=prompt_template["system"],
             messages=[{"role": "user", "content": user_message}],
+            max_tokens=3000,
+            temperature=0.9,
         )
 
-        raw_text = message.content[0].text.strip()
+        raw_text = resp.text
         if "```json" in raw_text:
             raw_text = raw_text.split("```json")[1].split("```")[0].strip()
         elif "```" in raw_text:
