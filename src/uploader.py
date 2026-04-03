@@ -29,6 +29,7 @@ CONFIG_DIR = Path(__file__).parent.parent / "config"
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.force-ssl",  # コメント投稿・プレイリスト操作に必要
 ]
 TOKEN_CACHE_PATH = Path(__file__).parent.parent / ".youtube_token.json"
 

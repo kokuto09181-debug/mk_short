@@ -19,8 +19,11 @@ import sys
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/youtube"]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.force-ssl",  # コメント投稿・プレイリスト操作に必要
+]
 
 def main():
     # ダウンロードしたOAuth2クライアントJSONのパスを指定
