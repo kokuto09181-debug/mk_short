@@ -65,9 +65,17 @@ class LLMClient:
             else ai_cfg.get("model", "claude-haiku-4-5-20251001")
         )
         self.ollama_host = ollama_host or ai_cfg.get("ollama_host", "http://localhost:11434")
+        self.num_ctx = int(ai_cfg.get("ollama_num_ctx", 4096))
         self._api_key = api_key
 
-        logger.info(f"LLMClient: backend={self.backend}, model={self.model}")
+        # KVキャッシュ量子化: Ollamaサーバーの環境変数として設定する
+        # ※ 現在起動中のOllamaには反映されない。設定後にOllamaを再起動すること。
+        kv_cache_type = ai_cfg.get("ollama_kv_cache_type", "")
+        if kv_cache_type and os.environ.get("OLLAMA_KV_CACHE_TYPE") != kv_cache_type:
+            os.environ["OLLAMA_KV_CACHE_TYPE"] = kv_cache_type
+            logger.info(f"OLLAMA_KV_CACHE_TYPE={kv_cache_type} を設定しました（Ollama再起動後に有効）")
+
+        logger.info(f"LLMClient: backend={self.backend}, model={self.model}, num_ctx={self.num_ctx}")
 
     # ─────────────────────────────────────────
     # パブリックAPI
@@ -137,14 +145,22 @@ class LLMClient:
         full_messages.extend(messages)
 
         client = ollama.Client(host=self.ollama_host)
-        resp = client.chat(
+
+        # think=False は Qwen3 系のみ有効（他モデルでは未対応パラメータのため除外）
+        is_qwen3 = "qwen3" in self.model.lower()
+        chat_kwargs: dict = dict(
             model=self.model,
             messages=full_messages,
             options={
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": self.num_ctx,
             },
         )
+        if is_qwen3:
+            chat_kwargs["think"] = False
+
+        resp = client.chat(**chat_kwargs)
 
         text = resp.message.content.strip()
         # Ollama はトークン数を eval_count で返す

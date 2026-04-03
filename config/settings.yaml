@@ -105,13 +105,21 @@ upload:
 
 ai:
   # backend: "anthropic" または "ollama"
-  backend: "anthropic"
+  backend: "ollama"
   model: "claude-haiku-4-5-20251001"
   max_tokens: 2500
   temperature: 0.85
   # Ollama ローカルLLM設定
-  ollama_model: "kwangsuklee/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-GGUF:latest"
+  # モデル選択例:
+  #   qwen3:14b    (9.3GB)  + ctx8192(2GB)  = 11GB → RTX3090に余裕で収容
+  #   gemma4:26b   (17GB)   + ctx4096(1GB)  = 18GB → RTX3090に収容可
+  #   qwen3:30b-a3b(19GB)   + ctx4096(2GB)  = 21GB → RTX3090ギリギリ
+  ollama_model: "qwen3:14b"
   ollama_host: "http://localhost:11434"
+  # コンテキスト長（モデルに合わせて調整）
+  ollama_num_ctx: 8192
+  # KVキャッシュ量子化（VRAM節約。Ollamaを再起動後に有効）
+  ollama_kv_cache_type: "q4_0"
 
 notion:
   # Notion データベース設定（偉人管理）
