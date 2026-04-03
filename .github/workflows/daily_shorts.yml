@@ -61,7 +61,6 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           YOUTUBE_TOKEN_JSON_JP: ${{ secrets.YOUTUBE_TOKEN_JSON_JP }}
-          YOUTUBE_TOKEN_JSON_EN: ${{ secrets.YOUTUBE_TOKEN_JSON_EN }}
         run: |
           DRY_RUN_FLAG=""
           COUNT_FLAG=""

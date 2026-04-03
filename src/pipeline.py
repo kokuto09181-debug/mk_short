@@ -73,7 +73,6 @@ class Pipeline:
         self._image_fetcher = None
         self._video_creator = None
         self._uploader_jp = None
-        self._uploader_en = None
 
     @property
     def notion(self):
@@ -111,11 +110,6 @@ class Pipeline:
             self._uploader_jp = YouTubeUploader(channel="japanese")
         return self._uploader_jp
 
-    @property
-    def uploader_en(self):
-        if self._uploader_en is None:
-            self._uploader_en = YouTubeUploader(channel="english")
-        return self._uploader_en
 
     # ─────────────────────────────────────────
     # メイン実行
@@ -172,40 +166,35 @@ class Pipeline:
 
         work_dir = tempfile.mkdtemp(prefix=f"shorts_{name_ja[:8]}_")
         try:
-            # 1. 脚本生成（日英）
+            # 1. 脚本生成（日本語のみ）
             long_script_ja = figure.get("long_script_ja", "") or ""
             longform_video_id = figure.get("longform_video_id", "") or ""
 
             script_ja_json = figure.get("script_ja", "")
-            script_en_json = figure.get("script_en", "")
 
-            # Notionに既存脚本があれば常にそちらを優先使用
-            if script_ja_json and script_en_json:
+            # Notionに既存脚本があれば優先使用
+            if script_ja_json:
                 try:
                     script_ja = json.loads(script_ja_json)
-                    script_en = json.loads(script_en_json)
-                    for s, lang in [(script_ja, "ja"), (script_en, "en")]:
-                        s["language"] = lang
-                        s["figure_name_ja"] = figure.get("name_ja", "")
-                        s["figure_name_en"] = figure.get("name_en", "")
-                        s["figure_era"] = figure.get("era", "")
-                        s["figure_field"] = figure.get("field", "")
+                    script_ja["language"] = "ja"
+                    script_ja["figure_name_ja"] = figure.get("name_ja", "")
+                    script_ja["figure_name_en"] = figure.get("name_en", "")
+                    script_ja["figure_era"] = figure.get("era", "")
+                    script_ja["figure_field"] = figure.get("field", "")
                     logger.info(f"Notionの既存脚本を使用: {name_ja}")
                 except (json.JSONDecodeError, KeyError):
                     logger.warning("脚本JSONのパースに失敗。再生成します")
                     script_ja_json = ""
-                    script_en_json = ""
 
             # 既存脚本がない場合のみ生成
-            if not script_ja_json or not script_en_json:
+            if not script_ja_json:
                 if long_script_ja and longform_video_id:
                     # 長編あり: Hookから派生生成
                     logger.info(f"長編Hookからショート脚本を派生生成: {name_ja}")
                     script_ja = self.generator.generate_short_from_longform_hook(figure, long_script_ja)
-                    script_en = self.generator.generate_script(figure, language="en")
                 else:
                     # 長編なし: 通常生成
-                    script_ja, script_en = self.generator.generate_both_languages(figure)
+                    script_ja = self.generator.generate_script(figure, language="ja")
 
             # 2. 背景画像取得 - まずWikipediaで偉人の実際の画像を取得
             img_dir = os.path.join(work_dir, "images")
@@ -228,7 +217,7 @@ class Pipeline:
                     ["ancient Japan", "traditional"], img_dir, count=3
                 )
 
-            # 3. 日本語動画生成
+            # 3. 日本語動画生成・アップロード
             jp_video_id = self._produce_and_upload(
                 script=script_ja,
                 figure=figure,
@@ -239,31 +228,20 @@ class Pipeline:
                 longform_video_id=longform_video_id,
             )
 
-            # 4. 英語動画生成
-            en_video_id = self._produce_and_upload(
-                script=script_en,
-                figure=figure,
-                image_paths=image_paths,
-                portrait_path=portrait_path,
-                work_dir=os.path.join(work_dir, "en"),
-                language="en",
-            )
-
-            # 5. Notion に完了記録
+            # 4. Notion に完了記録
             self.notion.mark_done(
                 page_id=page_id,
                 title_ja=script_ja.get("title", ""),
-                title_en=script_en.get("title", ""),
+                title_en="",
                 jp_video_id=jp_video_id,
-                en_video_id=en_video_id,
+                en_video_id="",
             )
 
-            logger.info(f"完了: {name_ja} | JP={jp_video_id} | EN={en_video_id}")
+            logger.info(f"完了: {name_ja} | JP={jp_video_id}")
             return {
                 "success": True,
                 "name_ja": name_ja,
                 "jp_video_id": jp_video_id,
-                "en_video_id": en_video_id,
             }
 
         except Exception as e:
@@ -444,22 +422,21 @@ class Pipeline:
             with open(meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
 
-            language = meta["language"]
-            lang_label = "日本語" if language == "ja" else "英語"
-            logger.info(f"[{lang_label}] 保留再試行: {meta['name_ja']} / {meta['title']}")
+            language = meta.get("language", "ja")
+            logger.info(f"保留再試行: {meta['name_ja']} / {meta['title']}")
 
             try:
-                uploader = self.uploader_jp if language == "ja" else self.uploader_en
+                uploader = self.uploader_jp
                 video_id = uploader.upload(
                     video_path=str(video_path),
                     title=meta["title"],
                     description=meta["description"],
                     thumbnail_path=str(thumb_path) if thumb_path.exists() else None,
                 )
-                logger.info(f"[{lang_label}] 保留再試行成功: {video_id}")
+                logger.info(f"保留再試行成功: {video_id}")
                 shutil.rmtree(slot)
             except Exception as e:
-                logger.warning(f"[{lang_label}] 保留再試行失敗（次回に持ち越し）: {e}")
+                logger.warning(f"保留再試行失敗（次回に持ち越し）: {e}")
 
     # ─────────────────────────────────────────
     # Notion ストック管理
