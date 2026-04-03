@@ -191,10 +191,24 @@ def generate_section_audios(
 # ─────────────────────────────────────────
 
 class LongformRenderer:
-    """1920×1080 横型長編動画のフレーム生成・合成"""
+    """1920×1080 横型長編動画のフレーム生成・合成
 
-    PORTRAIT_MAX_H = 580
-    PORTRAIT_MAX_W = 520
+    レイアウト:
+        ┌────────────────────────────────┐
+        │ [見出し 左上]    [人物画像 右上大] │
+        │                               │
+        │                               │
+        │ [字幕 下部 全幅]               │
+        └────────────────────────────────┘
+    人物画像は右上に大きく配置（字幕・見出しと重ならない）。
+    """
+
+    # 人物画像の最大サイズ（右上配置用に広め）
+    PORTRAIT_MAX_H = 780
+    PORTRAIT_MAX_W = 700
+
+    # 人物画像の配置位置: "top-right" | "top-left" | "bottom-right"
+    PORTRAIT_POSITION = "top-right"
 
     def __init__(self):
         self.font_path = find_font()
@@ -234,9 +248,16 @@ class LongformRenderer:
         return img
 
     def _overlay_portrait(
-        self, img: Image.Image, portrait_path: Optional[str]
+        self,
+        img: Image.Image,
+        portrait_path: Optional[str],
+        position: Optional[str] = None,
     ) -> Image.Image:
-        """中央に人物画像をオーバーレイ（縦横比維持・最大サイズ制限）"""
+        """人物画像をオーバーレイ（縦横比維持・位置指定）。
+
+        Args:
+            position: "top-right"（デフォルト）| "top-left" | "bottom-right" | "bottom-left"
+        """
         if not portrait_path or not os.path.exists(portrait_path):
             return img
         try:
@@ -245,13 +266,36 @@ class LongformRenderer:
             logger.warning(f"人物画像読み込み失敗: {e}")
             return img
 
+        pos = position or self.PORTRAIT_POSITION
         w, h = face.size
         scale = min(self.PORTRAIT_MAX_H / h, self.PORTRAIT_MAX_W / w, 1.0)
         new_w, new_h = int(w * scale), int(h * scale)
         face = face.resize((new_w, new_h), Image.LANCZOS)
 
-        x = (W - new_w) // 2
-        y = (H - new_h) // 2 - 20  # 少し上寄り
+        MARGIN = 40  # 端からのマージン
+        HEADING_H = 110  # 見出しエリアの高さ（重ならないよう下げる）
+        SUBTITLE_H = 160  # 字幕エリアの高さ（重ならないよう上げる）
+
+        if pos == "top-right":
+            x = W - new_w - MARGIN
+            y = HEADING_H
+        elif pos == "top-left":
+            x = MARGIN
+            y = HEADING_H
+        elif pos == "bottom-right":
+            x = W - new_w - MARGIN
+            y = H - new_h - SUBTITLE_H
+        elif pos == "bottom-left":
+            x = MARGIN
+            y = H - new_h - SUBTITLE_H
+        else:
+            # フォールバック: 右上
+            x = W - new_w - MARGIN
+            y = HEADING_H
+
+        # 画面外にはみ出さないようにクランプ
+        x = max(0, min(x, W - new_w))
+        y = max(0, min(y, H - new_h))
 
         result = img.convert("RGBA")
         result.paste(face, (x, y), face)
@@ -298,30 +342,40 @@ class LongformRenderer:
         return lines
 
     def _draw_subtitles(self, img: Image.Image, text: str) -> Image.Image:
-        """下部に字幕を描画（半透明背景付き）"""
+        """下部に字幕を描画（全幅・半透明背景付き）。
+
+        人物画像が右上配置のため字幕は画面下部全幅に表示。
+        視認性のため輪郭（黒縁）付きで描画。
+        """
         if not text:
             return img
         rgba = img.convert("RGBA")
         overlay = Image.new("RGBA", rgba.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
-        font = self._get_font(50)
-        pad_x = 80
+        font = self._get_font(52)
+        pad_x = 60
+        # 全幅で折り返し（人物画像エリアも含む）
         lines = self._wrap_text(text, font, W - pad_x * 2)[:3]
         if not lines:
             return img
 
-        line_h = font.getbbox("あ")[3] + 14
-        area_h = len(lines) * line_h + 20
-        area_top = H - area_h - 50
+        line_h = font.getbbox("あ")[3] + 16
+        area_h = len(lines) * line_h + 24
+        area_top = H - area_h - 44
 
+        # 背景バー（全幅）
         draw.rectangle(
-            [(pad_x - 24, area_top - 10), (W - pad_x + 24, area_top + area_h)],
-            fill=(0, 0, 0, 175),
+            [(0, area_top - 14), (W, area_top + area_h + 4)],
+            fill=(0, 0, 0, 185),
         )
+
         sy = area_top + 8
         for line in lines:
-            draw.text((pad_x + 2, sy + 2), line, font=font, fill=(0, 0, 0, 160))
+            # 黒縁（8方向に2pxずらして影）
+            for dx, dy in [(-2,-2),(-2,2),(2,-2),(2,2),(0,-2),(0,2),(-2,0),(2,0)]:
+                draw.text((pad_x + dx, sy + dy), line, font=font, fill=(0, 0, 0, 220))
+            # 本文（白）
             draw.text((pad_x, sy), line, font=font, fill=(255, 255, 255, 255))
             sy += line_h
 
@@ -528,30 +582,45 @@ def run(limit: int = 5, name: str = ""):
     img_fetcher = ImageFetcher()
     renderer = LongformRenderer()
 
-    fetch_limit = 100 if name else limit
-    figures = notion.get_figures_ready_for_longform_render(limit=fetch_limit)
+    # スキップ分を考慮して多めに取得（上限200件）
+    fetch_limit = 100 if name else min(limit * 5, 200)
+    all_figures = notion.get_figures_ready_for_longform_render(limit=fetch_limit)
+
     if name:
-        figures = [f for f in figures if f.get("name_ja") == name]
+        all_figures = [f for f in all_figures if f.get("name_ja") == name]
+
+    # アップロード済み（longform_video_id あり）は完全除外
+    uploaded = [f for f in all_figures if f.get("longform_video_id")]
+    figures = [f for f in all_figures if not f.get("longform_video_id")]
+
+    if uploaded:
+        logger.info(f"アップロード済みのため除外: {len(uploaded)} 件")
     if not figures:
         logger.info("レンダリング対象なし。完了。")
         return
 
-    success = 0
+    rendered = 0   # 実際にレンダリングした件数
+    skipped = 0    # ローカル動画スキップ件数
+
     for figure in figures:
+        # --limit は「実際にレンダリングする件数」なのでスキップは含めない
+        if not name and rendered >= limit:
+            break
+
         name_ja = figure.get("name_ja", "不明")
         page_id = figure["page_id"]
 
         work_dir = OUTPUT_DIR / safe_dirname(name_ja)
         output_path_check = work_dir / "output.mp4"
 
-        # ローカルにすでに動画ファイルがあればスキップ（再レンダリング防止）
+        # ローカルにすでに動画ファイルがあればステータスだけ更新してスキップ
         if output_path_check.exists():
             logger.info(f"スキップ（ローカルに動画あり）: {name_ja} → {output_path_check}")
             notion.mark_longform_render_done(page_id)
-            success += 1
+            skipped += 1
             continue
 
-        logger.info(f"レンダリング開始: {name_ja}")
+        logger.info(f"レンダリング開始 [{rendered + 1}/{limit}]: {name_ja}")
         notion.mark_longform_rendering(page_id)
         img_dir = work_dir / "images"
         bg_dir = work_dir / "bg"
@@ -603,7 +672,7 @@ def run(limit: int = 5, name: str = ""):
             )
 
             notion.mark_longform_render_done(page_id)
-            success += 1
+            rendered += 1
             logger.info(f"完了: {name_ja} → {output_path}")
 
         except Exception as e:
@@ -612,7 +681,9 @@ def run(limit: int = 5, name: str = ""):
 
         time.sleep(2)
 
-    logger.info(f"=== 完了: {success}/{len(figures)} 件 ===")
+    logger.info(
+        f"=== 完了: レンダリング {rendered} 件 / スキップ（動画あり） {skipped} 件 ==="
+    )
 
 
 if __name__ == "__main__":

@@ -21,6 +21,17 @@ on:
         description: "最大処理件数（デフォルト: 3）"
         type: string
         default: "3"
+      upload_mode:
+        description: "配信モード"
+        type: choice
+        options:
+          - "slot"    # スロット順に1件ずつ（デフォルト）
+          - "fixed"   # 全件を同じ日時に配信
+        default: "slot"
+      upload_time:
+        description: "fixed モード時の配信日時 JST（例: 20:00 / 2025-08-01 20:00）省略時は次スロット"
+        type: string
+        default: ""
 
 env:
   PYTHONUNBUFFERED: "1"
@@ -75,7 +86,13 @@ jobs:
           YOUTUBE_TOKEN_JSON_JP: ${{ secrets.YOUTUBE_TOKEN_JSON_JP }}
         run: |
           LIMIT="${{ github.event.inputs.limit }}"
-          python scripts/upload_longform.py --limit ${LIMIT:-3}
+          MODE="${{ github.event.inputs.upload_mode }}"
+          TIME="${{ github.event.inputs.upload_time }}"
+          CMD="python scripts/upload_longform.py --limit ${LIMIT:-3} --mode ${MODE:-slot}"
+          if [ -n "$TIME" ]; then
+            CMD="$CMD --time \"$TIME\""
+          fi
+          eval $CMD
 
       - name: Notify on failure
         if: failure()

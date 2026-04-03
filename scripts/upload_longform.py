@@ -2,13 +2,17 @@
 長編動画アップロードスクリプト
 render_done 状態の長編動画をスケジュール配信で YouTube にアップロードする。
 
-・配信時刻は settings.yaml の upload.schedule_times_jst を使用
-・今から1時間以降の最初の空きスロットに順番に割り当て
-・アップロード完了後に Notion の longform_status → uploaded / longform_video_id を更新
+【配信モード】
+  --mode slot   (デフォルト) settings.yaml のスロットに1件ずつ順番に割り当て
+  --mode fixed  全件を同じ日時に配信（--time で時刻指定、省略時は次スロット）
 
 使用方法:
-  python scripts/upload_longform.py           # 既定: 最大3件
-  python scripts/upload_longform.py --limit 5 # 最大N件
+  python scripts/upload_longform.py                        # スロットモード 最大3件
+  python scripts/upload_longform.py --limit 5              # スロットモード 最大5件
+  python scripts/upload_longform.py --mode fixed           # 全件を次スロット日時に配信
+  python scripts/upload_longform.py --mode fixed --time 20:00          # 本日20:00 JST に全件配信
+  python scripts/upload_longform.py --mode fixed --time 2025-08-01 20:00  # 指定日時に全件配信
+  python scripts/upload_longform.py --name 緒方洪庵        # 特定偉人のみ
 """
 
 import argparse
@@ -51,9 +55,7 @@ def safe_dirname(name: str) -> str:
 
 
 def next_schedule_slots(schedule_times_jst: list, count: int, start_from: datetime) -> list:
-    """
-    start_from の1時間後以降で、最初の count 個のスロット時刻を返す（UTC aware datetime）。
-    """
+    """【スロットモード】start_from の1時間後以降で count 個のスロットを順番に返す（UTC）。"""
     min_time = (start_from + timedelta(hours=1)).astimezone(JST)
     times_hm = sorted([tuple(map(int, t.split(":"))) for t in schedule_times_jst])
 
@@ -71,6 +73,47 @@ def next_schedule_slots(schedule_times_jst: list, count: int, start_from: dateti
         min_time = datetime(check_date.year, check_date.month, check_date.day, tzinfo=JST)
 
     return slots
+
+
+def fixed_schedule_slots(count: int, fixed_time_str: Optional[str], schedule_times_jst: list) -> list:
+    """【同時配信モード】全件を同じ日時にスケジュールした UTC datetime リストを返す。
+
+    Args:
+        count: 動画本数
+        fixed_time_str: 指定日時文字列。以下の形式を受け付ける:
+            None         → settings.yaml の次スロット（1時間後以降の最初のスロット）
+            "HH:MM"      → 本日または翌日の HH:MM JST
+            "YYYY-MM-DD HH:MM" → 指定日時 JST
+        schedule_times_jst: settings.yaml のスロット一覧（fixed_time_str=None 時に使用）
+    """
+    if fixed_time_str is None:
+        # settings.yaml の次スロット1つを全件に使う
+        slots_one = next_schedule_slots(schedule_times_jst, 1, datetime.now(timezone.utc))
+        publish_at = slots_one[0]
+    else:
+        fixed_time_str = fixed_time_str.strip()
+        try:
+            if len(fixed_time_str) <= 5:
+                # "HH:MM" のみ → 本日の該当時刻（1時間後未満なら翌日）
+                h, m = map(int, fixed_time_str.split(":"))
+                now_jst = datetime.now(JST)
+                candidate = now_jst.replace(hour=h, minute=m, second=0, microsecond=0)
+                if candidate < now_jst + timedelta(hours=1):
+                    candidate += timedelta(days=1)
+                publish_at = candidate.astimezone(timezone.utc)
+            else:
+                # "YYYY-MM-DD HH:MM" → 指定日時
+                dt = datetime.strptime(fixed_time_str, "%Y-%m-%d %H:%M")
+                publish_at = dt.replace(tzinfo=JST).astimezone(timezone.utc)
+        except ValueError as e:
+            raise ValueError(
+                f"--time の形式が不正です: '{fixed_time_str}'\n"
+                f"  正しい形式: 'HH:MM' または 'YYYY-MM-DD HH:MM'\n  詳細: {e}"
+            )
+
+    jst_str = publish_at.astimezone(JST).strftime("%Y-%m-%d %H:%M JST")
+    logger.info(f"同時配信モード: 全 {count} 件を {jst_str} に配信")
+    return [publish_at] * count
 
 
 def generate_thumbnail(video_path: str, output_path: str) -> Optional[str]:
@@ -114,7 +157,13 @@ def parse_title_and_description(long_script: str) -> tuple:
     return title, description, tags_str
 
 
-def run(limit: int = 3, name: str = ""):
+def run(limit: int = 3, name: str = "", mode: str = "slot", fixed_time: Optional[str] = None):
+    """
+    Args:
+        mode: "slot"  → settings.yaml スロットに1件ずつ順番配信（デフォルト）
+              "fixed" → 全件を同じ日時に配信（fixed_time で時刻指定）
+        fixed_time: mode="fixed" 時の配信日時。"HH:MM" or "YYYY-MM-DD HH:MM" (JST)
+    """
     notion = NotionFigureClient()
     config = load_config()
     schedule_times = config["upload"]["schedule_times_jst"]
@@ -138,8 +187,11 @@ def run(limit: int = 3, name: str = ""):
     figures = figures[:limit]
 
     # 配信スケジュールスロットを生成
-    slots = next_schedule_slots(schedule_times, len(figures), datetime.now(timezone.utc))
-    logger.info(f"配信スロット: {[s.astimezone(JST).strftime('%m/%d %H:%M JST') for s in slots]}")
+    if mode == "fixed":
+        slots = fixed_schedule_slots(len(figures), fixed_time, schedule_times)
+    else:
+        slots = next_schedule_slots(schedule_times, len(figures), datetime.now(timezone.utc))
+        logger.info(f"スロットモード: {[s.astimezone(JST).strftime('%m/%d %H:%M JST') for s in slots]}")
 
     uploader = YouTubeUploader(channel="japanese")
     success = 0
@@ -212,6 +264,21 @@ def run(limit: int = 3, name: str = ""):
                 f"完了: {name_ja} → video_id={video_id}"
                 f" 配信予定: {publish_at.astimezone(JST).strftime('%Y-%m-%d %H:%M JST')}"
             )
+
+            # 既存ショート動画（jp_video_id）にコメントで長編リンクを投稿
+            jp_short_id = figure.get("jp_video_id", "")
+            if jp_short_id:
+                comment_text = (
+                    f"▶ この動画の完全版・詳しい解説はこちら！\n"
+                    f"https://youtu.be/{video_id}\n\n"
+                    f"生涯・時代背景・功績をじっくり解説しています📺 ぜひご覧ください！"
+                )
+                try:
+                    uploader.post_comment(jp_short_id, comment_text)
+                    logger.info(f"ショートにコメント投稿: {jp_short_id}")
+                except Exception as ce:
+                    logger.warning(f"ショートへのコメント投稿失敗（スキップ）: {ce}")
+
         except Exception as e:
             logger.error(f"アップロード失敗: {name_ja}: {e}")
             # uploading → render_done に戻して次回再試行できるようにする（render_error にしない）
@@ -227,8 +294,33 @@ def run(limit: int = 3, name: str = ""):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="長編動画スケジュールアップロード")
+    parser = argparse.ArgumentParser(
+        description="長編動画スケジュールアップロード",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+配信モード:
+  slot  (デフォルト): settings.yaml のスロットに1件ずつ順番割り当て
+  fixed             : 全件を同じ日時に配信
+
+例:
+  python scripts/upload_longform.py                              # スロット 最大3件
+  python scripts/upload_longform.py --limit 10                   # スロット 最大10件
+  python scripts/upload_longform.py --mode fixed                 # 次スロット日時に全件同時配信
+  python scripts/upload_longform.py --mode fixed --time 20:00    # 本日20:00 JST に全件同時配信
+  python scripts/upload_longform.py --mode fixed --time "2025-08-01 20:00"  # 指定日時に全件同時配信
+  python scripts/upload_longform.py --name 緒方洪庵              # 特定偉人のみ（スロットモード）
+        """,
+    )
     parser.add_argument("--limit", type=int, default=3, help="最大処理件数（デフォルト: 3）")
     parser.add_argument("--name", type=str, default="", help="特定の偉人名（日本語）を指定して1件のみ処理")
+    parser.add_argument(
+        "--mode", type=str, default="slot", choices=["slot", "fixed"],
+        help="配信モード: slot=スロット順（デフォルト）/ fixed=全件同時配信",
+    )
+    parser.add_argument(
+        "--time", type=str, default=None,
+        metavar="HH:MM or 'YYYY-MM-DD HH:MM'",
+        help="fixed モード時の配信日時 JST（省略時は次スロット）",
+    )
     args = parser.parse_args()
-    run(limit=args.limit, name=args.name)
+    run(limit=args.limit, name=args.name, mode=args.mode, fixed_time=args.time)
