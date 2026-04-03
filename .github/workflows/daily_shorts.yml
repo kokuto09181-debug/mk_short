@@ -52,17 +52,6 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # ─── YouTubeトークンスコープ確認（確認後削除予定）───
-      - name: Check YouTube token scopes
-        env:
-          YOUTUBE_TOKEN_JSON_JP: ${{ secrets.YOUTUBE_TOKEN_JSON_JP }}
-        run: |
-          python -c "
-          import json, os
-          token = json.loads(os.environ['YOUTUBE_TOKEN_JSON_JP'])
-          print('JP token scopes:', token.get('scopes') or token.get('scope', 'not found'))
-          "
-
       # ─── 動画生成・アップロード ───────────────
       - name: Generate and upload Shorts
         env:
