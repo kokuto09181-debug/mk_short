@@ -176,44 +176,35 @@ class Pipeline:
             long_script_ja = figure.get("long_script_ja", "") or ""
             longform_video_id = figure.get("longform_video_id", "") or ""
 
-            # 長編動画が存在する場合は日本語ショートをHookから派生生成
-            # （既存キャッシュは無視して毎回派生させる）
-            if long_script_ja and longform_video_id:
-                logger.info(f"長編Hookからショート脚本を派生生成: {name_ja}")
-                script_ja = self.generator.generate_short_from_longform_hook(figure, long_script_ja)
-                # 英語は従来通り独立生成（またはNotionキャッシュ使用）
-                script_en_json = figure.get("script_en", "")
-                if script_en_json:
-                    try:
-                        script_en = json.loads(script_en_json)
-                        script_en["language"] = "en"
-                        script_en["figure_name_ja"] = figure.get("name_ja", "")
-                        script_en["figure_name_en"] = figure.get("name_en", "")
-                        script_en["figure_era"] = figure.get("era", "")
-                        script_en["figure_field"] = figure.get("field", "")
-                    except (json.JSONDecodeError, KeyError):
-                        script_en = self.generator.generate_script(figure, language="en")
-                else:
+            script_ja_json = figure.get("script_ja", "")
+            script_en_json = figure.get("script_en", "")
+
+            # Notionに既存脚本があれば常にそちらを優先使用
+            if script_ja_json and script_en_json:
+                try:
+                    script_ja = json.loads(script_ja_json)
+                    script_en = json.loads(script_en_json)
+                    for s, lang in [(script_ja, "ja"), (script_en, "en")]:
+                        s["language"] = lang
+                        s["figure_name_ja"] = figure.get("name_ja", "")
+                        s["figure_name_en"] = figure.get("name_en", "")
+                        s["figure_era"] = figure.get("era", "")
+                        s["figure_field"] = figure.get("field", "")
+                    logger.info(f"Notionの既存脚本を使用: {name_ja}")
+                except (json.JSONDecodeError, KeyError):
+                    logger.warning("脚本JSONのパースに失敗。再生成します")
+                    script_ja_json = ""
+                    script_en_json = ""
+
+            # 既存脚本がない場合のみ生成
+            if not script_ja_json or not script_en_json:
+                if long_script_ja and longform_video_id:
+                    # 長編あり: Hookから派生生成
+                    logger.info(f"長編Hookからショート脚本を派生生成: {name_ja}")
+                    script_ja = self.generator.generate_short_from_longform_hook(figure, long_script_ja)
                     script_en = self.generator.generate_script(figure, language="en")
-            else:
-                # 長編なし: Notionキャッシュがあれば使用、なければ新規生成
-                script_ja_json = figure.get("script_ja", "")
-                script_en_json = figure.get("script_en", "")
-                if script_ja_json and script_en_json:
-                    try:
-                        script_ja = json.loads(script_ja_json)
-                        script_en = json.loads(script_en_json)
-                        for s, lang in [(script_ja, "ja"), (script_en, "en")]:
-                            s["language"] = lang
-                            s["figure_name_ja"] = figure.get("name_ja", "")
-                            s["figure_name_en"] = figure.get("name_en", "")
-                            s["figure_era"] = figure.get("era", "")
-                            s["figure_field"] = figure.get("field", "")
-                        logger.info(f"Notionの既存脚本を使用: {name_ja}")
-                    except (json.JSONDecodeError, KeyError):
-                        logger.warning("脚本JSONのパースに失敗。APIで再生成します")
-                        script_ja, script_en = self.generator.generate_both_languages(figure)
                 else:
+                    # 長編なし: 通常生成
                     script_ja, script_en = self.generator.generate_both_languages(figure)
 
             # 2. 背景画像取得 - まずWikipediaで偉人の実際の画像を取得
