@@ -265,19 +265,16 @@ def run(limit: int = 3, name: str = "", mode: str = "slot", fixed_time: Optional
                 f" 配信予定: {publish_at.astimezone(JST).strftime('%Y-%m-%d %H:%M JST')}"
             )
 
-            # 既存ショート動画（jp_video_id）にコメントで長編リンクを投稿
-            jp_short_id = figure.get("jp_video_id", "")
-            if jp_short_id:
-                comment_text = (
-                    f"▶ この動画の完全版・詳しい解説はこちら！\n"
-                    f"https://youtu.be/{video_id}\n\n"
-                    f"生涯・時代背景・功績をじっくり解説しています📺 ぜひご覧ください！"
-                )
-                try:
-                    uploader.post_comment(jp_short_id, comment_text)
-                    logger.info(f"ショートにコメント投稿: {jp_short_id}")
-                except Exception as ce:
-                    logger.warning(f"ショートへのコメント投稿失敗（スキップ）: {ce}")
+            # プレイリスト作成（または既存取得）→ 長編を追加 → Notion に保存
+            try:
+                playlist_title = f"{name_ja} - 完全解説シリーズ"
+                playlist_desc = f"{name_ja}の長編解説動画と関連ショート動画をまとめたプレイリストです。"
+                playlist_id = uploader.create_or_get_playlist(playlist_title, playlist_desc)
+                if playlist_id:
+                    uploader.add_to_playlist(playlist_id, video_id)
+                    notion.save_playlist_id(page_id, playlist_id)
+            except Exception as pe:
+                logger.warning(f"プレイリスト処理失敗（スキップ）: {pe}")
 
         except Exception as e:
             logger.error(f"アップロード失敗: {name_ja}: {e}")

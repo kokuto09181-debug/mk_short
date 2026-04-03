@@ -372,6 +372,7 @@ class NotionFigureClient:
             "long_script_ja": self._get_prop_text(props, "long_script_ja"),
             "longform_status": self._get_prop_select(props, "longform_status"),
             "longform_video_id": self._get_prop_text(props, "longform_video_id"),
+            "playlist_id": self._get_prop_text(props, "playlist_id"),
             "note_status": self._get_prop_select(props, "note_status"),
             "note_url": self._get_prop_text(props, "note_url"),
             "note_article": self._get_prop_text(props, "note_article"),
@@ -391,6 +392,7 @@ class NotionFigureClient:
                     "long_script_ja": {"rich_text": {}},
                     "longform_status": {"select": {}},
                     "longform_video_id": {"rich_text": {}},
+                    "playlist_id": {"rich_text": {}},
                     "note_status": {"select": {}},
                     "note_url": {"rich_text": {}},
                     "note_article": {"rich_text": {}},
@@ -540,6 +542,15 @@ class NotionFigureClient:
             }
         })
         logger.info(f"longform_video_id 保存: page_id={page_id}, video_id={video_id}")
+
+    def save_playlist_id(self, page_id: str, playlist_id: str):
+        """プレイリストIDを Notion に保存する"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "playlist_id": {"rich_text": [{"text": {"content": playlist_id}}]},
+            }
+        })
+        logger.info(f"playlist_id 保存: page_id={page_id}, playlist_id={playlist_id}")
 
     # ─────────────────────────────────────────
     # DB 初期セットアップ
