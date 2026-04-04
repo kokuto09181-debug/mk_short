@@ -34,5 +34,10 @@ Thumbs.db
 data/longform_output/
 data/longform_test/
 
-# YouTube OAuth トークン（scripts 配下）
+# YouTube OAuth トークン
 scripts/youtube_token*.json
+youtube_token*.json
+
+# note.com セッション・デバッグ
+data/note_session.json
+scripts/note_error.png

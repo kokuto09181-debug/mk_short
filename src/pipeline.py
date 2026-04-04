@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from content_generator import ContentGenerator
 from image_fetcher import ImageFetcher
+from line_notifier import LineNotifier
 from notion_client import NotionFigureClient
 from tts_generator import TTSGenerator
 from uploader import YouTubeUploader
@@ -73,6 +74,7 @@ class Pipeline:
         self._image_fetcher = None
         self._video_creator = None
         self._uploader_jp = None
+        self.line = LineNotifier()
 
     @property
     def notion(self):
@@ -150,6 +152,10 @@ class Pipeline:
         # サマリー
         success = sum(1 for r in results if r["success"])
         logger.info(f"=== 完了: {success}/{len(results)} 本成功 ===")
+
+        # LINE 日次サマリー通知
+        self.line.notify_daily_summary(results, dry_run=self.dry_run)
+
         return results
 
     # ─────────────────────────────────────────
@@ -237,6 +243,17 @@ class Pipeline:
                 en_video_id="",
             )
 
+            # LINE アップロード成功通知 + VOOM投稿
+            if jp_video_id and jp_video_id != "dry_run":
+                title_ja = script_ja.get("title", name_ja)
+                self.line.notify_upload_success(
+                    name_ja=name_ja,
+                    title=title_ja,
+                    video_id=jp_video_id,
+                    language="ja",
+                    longform_video_id=longform_video_id,
+                )
+
             logger.info(f"完了: {name_ja} | JP={jp_video_id}")
             return {
                 "success": True,
@@ -248,6 +265,8 @@ class Pipeline:
             tb = traceback.format_exc()
             logger.error(f"エラー: {name_ja}\n{tb}")
             self.notion.mark_error(page_id, str(e)[:500])
+            # LINE エラー通知
+            self.line.notify_error(name_ja=name_ja, error=str(e))
             return {"success": False, "name_ja": name_ja, "error": str(e)}
 
         finally:
@@ -323,10 +342,6 @@ class Pipeline:
                 )
                 uploader.post_comment(video_id, comment_text)
 
-                # 長編と同じプレイリストにショートを追加
-                playlist_id = figure.get("playlist_id", "")
-                if playlist_id:
-                    uploader.add_to_playlist(playlist_id, video_id)
 
             return video_id
         except Exception as upload_err:
