@@ -238,9 +238,7 @@ class Pipeline:
             self.notion.mark_done(
                 page_id=page_id,
                 title_ja=script_ja.get("title", ""),
-                title_en="",
                 jp_video_id=jp_video_id,
-                en_video_id="",
             )
 
             # LINE アップロード成功通知 + VOOM投稿

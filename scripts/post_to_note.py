@@ -101,7 +101,7 @@ def download_youtube_thumbnail(video_id: str) -> str:
                 logger.info(f"サムネイルDL完了: {quality} ({len(data) // 1024}KB)")
                 return tf.name
         except Exception as e:
-            logger.debug(f"サムネイルDL失敗 ({quality}): {e}")
+            logger.warning(f"サムネイルDL失敗 ({quality}): {e}")
     return ""
 
 
@@ -173,20 +173,24 @@ def post_to_note(
             # ── カバー画像アップロード ──────────────────────
             if thumbnail_path and os.path.exists(thumbnail_path):
                 try:
+                    # 円形ボタンをクリック → メニューが開く
+                    page.locator('[data-dragging="false"] button').first.click()
+                    page.wait_for_selector("text=画像をアップロード", timeout=3000)
+                    # 「画像をアップロード」をクリックしてファイル選択ダイアログを待つ
                     with page.expect_file_chooser(timeout=5000) as fc_info:
-                        page.locator(
-                            '[class*="coverImage"] button,'
-                            '[class*="CoverImage"] button,'
-                            '[class*="cover-image"] button,'
-                            '[class*="eyecatch"] button,'
-                            'button[aria-label*="画像"],'
-                            'button[aria-label*="カバー"]'
-                        ).first.click()
+                        page.get_by_text("画像をアップロード").click()
                     fc_info.value.set_files(thumbnail_path)
-                    page.wait_for_timeout(1500)
+                    page.wait_for_timeout(2000)  # トリミング画面の描画を待つ
+                    # 「保存」ボタンをクリック（exact=True で「下書き保存」を除外）
+                    save_btn = page.get_by_role("button", name="保存", exact=True)
+                    save_btn.wait_for(state="visible", timeout=15000)
+                    save_btn.click()
+                    page.wait_for_timeout(1000)
                     logger.info("カバー画像アップロード完了")
                 except Exception as e:
                     logger.warning(f"カバー画像スキップ: {e}")
+                    page.keyboard.press("Escape")
+                    page.wait_for_timeout(300)
 
             # ── タイトル入力 ────────────────────────────────
             title_el = page.locator('textarea[placeholder="記事タイトル"]')
@@ -224,7 +228,8 @@ def post_to_note(
                 logger.info("「投稿する」クリック")
 
                 try:
-                    page.wait_for_url("**/note.com/**", timeout=15000)
+                    # editor.note.com ではなく note.com 本体のURLになるまで待つ
+                    page.wait_for_url("https://note.com/**", timeout=15000)
                 except PWTimeout:
                     pass
             else:
@@ -252,58 +257,64 @@ def post_to_note(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", default="")
-    parser.add_argument("--draft", action="store_true")
+    parser.add_argument("--name", default="", help="偉人名を指定（1件のみ）")
+    parser.add_argument("--count", type=int, default=1, help="投稿件数（デフォルト: 1）")
+    parser.add_argument("--draft", action="store_true", help="下書き保存")
     args = parser.parse_args()
 
     notion = NotionFigureClient()
+    candidates = notion.get_figures_ready_for_note(limit=100)
 
     if args.name:
-        candidates = notion.get_figures_ready_for_note(limit=100)
         figures = [f for f in candidates if f.get("name_ja") == args.name]
     else:
-        candidates = notion.get_figures_ready_for_note(limit=100)
-        figures = [f for f in candidates if f.get("longform_video_id")][:1]
+        figures = [f for f in candidates if f.get("longform_video_id")][:args.count]
 
     if not figures:
         print("投稿対象なし（長編動画リンクあり・note未投稿）")
         sys.exit(0)
 
-    figure      = figures[0]
-    name_ja     = figure.get("name_ja", "")
-    script_text = figure.get("long_script_ja", "")
-    longform_id = figure.get("longform_video_id", "")
-    page_id     = figure.get("page_id", "")
+    logger.info(f"投稿予定: {len(figures)} 件")
+    success, failed = 0, 0
 
-    logger.info(f"投稿対象: {name_ja} (YouTube: {longform_id})")
+    for figure in figures:
+        name_ja     = figure.get("name_ja", "")
+        script_text = figure.get("long_script_ja", "")
+        longform_id = figure.get("longform_video_id", "")
+        page_id     = figure.get("page_id", "")
 
-    title, body_text, hashtags = script_to_note_content(script_text)
-    if not title:
-        title = f"【知られざる偉人】{name_ja}の生涯"
-    if not hashtags:
-        hashtags = ["偉人", "日本史", "歴史"]
+        logger.info(f"投稿対象: {name_ja} (YouTube: {longform_id})")
 
-    # YouTubeサムネイルをカバー画像として使用
-    thumbnail_path = download_youtube_thumbnail(longform_id) if longform_id else ""
+        title, body_text, hashtags = script_to_note_content(script_text)
+        if not title:
+            title = f"【知られざる偉人】{name_ja}の生涯"
+        if not hashtags:
+            hashtags = ["偉人", "日本史", "歴史"]
 
-    try:
-        note_url = post_to_note(
-            title=title,
-            body_text=body_text,
-            hashtags=hashtags,
-            youtube_video_id=longform_id,
-            thumbnail_path=thumbnail_path,
-            publish=not args.draft,
-        )
-    finally:
-        if thumbnail_path and os.path.exists(thumbnail_path):
-            os.unlink(thumbnail_path)
+        thumbnail_path = download_youtube_thumbnail(longform_id) if longform_id else ""
 
-    if note_url and "note.com" in note_url:
-        print(f"\n[完了] {note_url}")
-        notion.mark_note_posted(page_id, note_url)
-    else:
-        print("\n[失敗] note_error.png を確認してください")
+        try:
+            note_url = post_to_note(
+                title=title,
+                body_text=body_text,
+                hashtags=hashtags,
+                youtube_video_id=longform_id,
+                thumbnail_path=thumbnail_path,
+                publish=not args.draft,
+            )
+        finally:
+            if thumbnail_path and os.path.exists(thumbnail_path):
+                os.unlink(thumbnail_path)
+
+        if note_url and "note.com" in note_url:
+            print(f"[完了] {name_ja} → {note_url}")
+            notion.mark_note_posted(page_id, note_url)
+            success += 1
+        else:
+            print(f"[失敗] {name_ja}")
+            failed += 1
+
+    print(f"\n=== 完了: {success} 件成功 / {failed} 件失敗 ===")
 
 
 if __name__ == "__main__":

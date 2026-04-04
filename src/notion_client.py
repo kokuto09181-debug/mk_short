@@ -12,10 +12,8 @@ Notion DB スキーマ:
   - notes (rich_text)     : 特筆事項
   - status (select)       : pending / producing / done / error
   - jp_video_id (rich_text): YouTube動画ID（日本語）
-  - en_video_id (rich_text): YouTube動画ID（英語）
   - produced_at (date)    : 制作日
   - title_ja (rich_text)  : 動画タイトル（日本語）
-  - title_en (rich_text)  : 動画タイトル（英語）
 """
 
 import logging
@@ -170,116 +168,6 @@ class NotionFigureClient:
         text = _json.dumps(obj, ensure_ascii=False)
         return [{"text": {"content": text[i:i+2000]}} for i in range(0, len(text), 2000)]
 
-    def save_scripts(self, page_id: str, script_ja: dict, script_en: dict):
-        """台本（日英）をNotionに保存する"""
-        self._ensure_script_properties()
-        self._patch(f"pages/{page_id}", {
-            "properties": {
-                "script_ja": {"rich_text": self._json_to_rich_text(script_ja)},
-                "script_en": {"rich_text": self._json_to_rich_text(script_en)},
-            }
-        })
-        logger.info(f"台本保存: page_id={page_id}")
-
-    def get_scripts(self, page_id: str) -> tuple:
-        """NotionページからJSONパース済み台本（日英）を返す。未保存なら(None, None)"""
-        import json as _json
-        page = self._get(f"pages/{page_id}")
-        props = page.get("properties", {})
-        ja_text = self._get_prop_text(props, "script_ja")
-        en_text = self._get_prop_text(props, "script_en")
-        try:
-            script_ja = _json.loads(ja_text) if ja_text else None
-        except Exception:
-            script_ja = None
-        try:
-            script_en = _json.loads(en_text) if en_text else None
-        except Exception:
-            script_en = None
-        return script_ja, script_en
-
-    def get_pending_without_scripts(self, limit: int = 10) -> list[dict]:
-        """status=pending かつ script_ja が未設定の偉人を返す（Cron台本生成用）"""
-        data = self.query_figures({
-            "and": [
-                {"property": "status", "select": {"equals": "pending"}},
-                {"property": "script_ja", "rich_text": {"is_empty": True}},
-            ]
-        })
-        return [self._page_to_figure(p) for p in data[:limit]]
-
-    def _ensure_script_properties(self):
-        """script_ja / script_en プロパティがDBになければ追加する（初回のみ）"""
-        if getattr(self, "_script_props_ensured", False):
-            return
-        try:
-            self.session.patch(
-                f"{NOTION_API_BASE}/databases/{self.database_id}",
-                json={"properties": {
-                    "script_ja": {"rich_text": {}},
-                    "script_en": {"rich_text": {}},
-                }},
-                timeout=10,
-            )
-        except Exception as e:
-            logger.warning(f"script プロパティの追加に失敗（無視）: {e}")
-        self._script_props_ensured = True
-
-    def mark_producing(self, page_id: str):
-        """制作中フラグを立てる（並列実行時の2重取得防止）"""
-        self._patch(f"pages/{page_id}", {
-            "properties": {
-                "status": {"select": {"name": "producing"}},
-            }
-        })
-
-    def mark_done(
-        self,
-        page_id: str,
-        title_ja: str,
-        title_en: str,
-        jp_video_id: str = "",
-        en_video_id: str = "",
-    ):
-        """制作完了・動画IDを記録する"""
-        props = {
-            "status": {"select": {"name": "done"}},
-            "title_ja": {"rich_text": [{"text": {"content": title_ja}}]},
-            "title_en": {"rich_text": [{"text": {"content": title_en}}]},
-            "produced_at": {"date": {"start": datetime.now(timezone.utc).isoformat()}},
-        }
-        if jp_video_id:
-            props["jp_video_id"] = {"rich_text": [{"text": {"content": jp_video_id}}]}
-        if en_video_id:
-            props["en_video_id"] = {"rich_text": [{"text": {"content": en_video_id}}]}
-
-        self._patch(f"pages/{page_id}", {"properties": props})
-        logger.info(f"完了マーク: page_id={page_id}, jp={jp_video_id}, en={en_video_id}")
-
-    def _ensure_error_log_property(self):
-        """error_log プロパティが DB になければ追加する（初回のみ）"""
-        if self._error_log_ensured:
-            return
-        try:
-            self.session.patch(
-                f"{NOTION_API_BASE}/databases/{self.database_id}",
-                json={"properties": {"error_log": {"rich_text": {}}}},
-                timeout=10,
-            )
-        except Exception as e:
-            logger.warning(f"error_log プロパティの追加に失敗（無視）: {e}")
-        self._error_log_ensured = True
-
-    def write_scripts(self, page_id: str, script_ja_json: str, script_en_json: str):
-        """Claudeが生成した脚本JSONをNotionページに書き込む"""
-        self._patch(f"pages/{page_id}", {
-            "properties": {
-                "script_ja": {"rich_text": self._split_rich_text(script_ja_json)},
-                "script_en": {"rich_text": self._split_rich_text(script_en_json)},
-            }
-        })
-        logger.info(f"脚本書き込み完了: page_id={page_id}")
-
     def get_pending_without_scripts(self, limit: int = 10) -> list[dict]:
         """script_ja が空の pending/error 偉人を取得する"""
         data = self.query_figures({
@@ -295,20 +183,54 @@ class NotionFigureClient:
         logger.info(f"脚本未生成: {len(figures)} 件")
         return figures[:limit]
 
-    def ensure_script_properties(self):
-        """script_ja / script_en プロパティが DB になければ追加する"""
+    def mark_producing(self, page_id: str):
+        """制作中フラグを立てる（並列実行時の2重取得防止）"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "status": {"select": {"name": "producing"}},
+            }
+        })
+
+    def mark_done(
+        self,
+        page_id: str,
+        title_ja: str,
+        jp_video_id: str = "",
+    ):
+        """制作完了・動画IDを記録する"""
+        props = {
+            "status": {"select": {"name": "done"}},
+            "title_ja": {"rich_text": [{"text": {"content": title_ja}}]},
+            "produced_at": {"date": {"start": datetime.now(timezone.utc).isoformat()}},
+        }
+        if jp_video_id:
+            props["jp_video_id"] = {"rich_text": [{"text": {"content": jp_video_id}}]}
+
+        self._patch(f"pages/{page_id}", {"properties": props})
+        logger.info(f"完了マーク: page_id={page_id}, jp={jp_video_id}")
+
+    def _ensure_error_log_property(self):
+        """error_log プロパティが DB になければ追加する（初回のみ）"""
+        if self._error_log_ensured:
+            return
         try:
             self.session.patch(
                 f"{NOTION_API_BASE}/databases/{self.database_id}",
-                json={"properties": {
-                    "script_ja": {"rich_text": {}},
-                    "script_en": {"rich_text": {}},
-                }},
+                json={"properties": {"error_log": {"rich_text": {}}}},
                 timeout=10,
             )
-            logger.info("script_ja / script_en プロパティを確認・追加しました")
         except Exception as e:
-            logger.warning(f"script プロパティの追加に失敗（無視）: {e}")
+            logger.warning(f"error_log プロパティの追加に失敗（無視）: {e}")
+        self._error_log_ensured = True
+
+    def write_scripts(self, page_id: str, script_ja_json: str):
+        """Claudeが生成した脚本JSONをNotionページに書き込む"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "script_ja": {"rich_text": self._split_rich_text(script_ja_json)},
+            }
+        })
+        logger.info(f"脚本書き込み完了: page_id={page_id}")
 
     def mark_error(self, page_id: str, error_msg: str):
         """エラーフラグを立てる（notes は上書きしない）"""
@@ -367,15 +289,12 @@ class NotionFigureClient:
             "notes": self._get_prop_text(props, "notes"),
             "status": self._get_prop_select(props, "status"),
             "script_ja": self._get_prop_text(props, "script_ja"),
-            "script_en": self._get_prop_text(props, "script_en"),
             "research_data": self._get_prop_text(props, "research_data"),
             "long_script_ja": self._get_prop_text(props, "long_script_ja"),
             "longform_status": self._get_prop_select(props, "longform_status"),
             "longform_video_id": self._get_prop_text(props, "longform_video_id"),
-            "playlist_id": self._get_prop_text(props, "playlist_id"),
             "note_status": self._get_prop_select(props, "note_status"),
             "note_url": self._get_prop_text(props, "note_url"),
-            "note_article": self._get_prop_text(props, "note_article"),
         }
 
     # ─────────────────────────────────────────
@@ -392,10 +311,8 @@ class NotionFigureClient:
                     "long_script_ja": {"rich_text": {}},
                     "longform_status": {"select": {}},
                     "longform_video_id": {"rich_text": {}},
-                    "playlist_id": {"rich_text": {}},
                     "note_status": {"select": {}},
                     "note_url": {"rich_text": {}},
-                    "note_article": {"rich_text": {}},
                 }},
                 timeout=10,
             )
@@ -415,30 +332,6 @@ class NotionFigureClient:
             if f.get("note_status", "") not in ("posted",)
             and f.get("long_script_ja")
         ]
-        return ready[:limit]
-
-    def save_note_article(self, page_id: str, article_text: str):
-        """生成したnote記事テキストをNotionに保存し、note_status を article_ready にする"""
-        import re
-        clean_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', article_text)
-        self._patch(f"pages/{page_id}", {
-            "properties": {
-                "note_article": {"rich_text": self._split_rich_text(clean_text)},
-                "note_status": {"select": {"name": "article_ready"}},
-            }
-        })
-        logger.info(f"note_article 保存完了: page_id={page_id} ({len(clean_text)}文字)")
-
-    def get_figures_ready_for_note_article(self, limit: int = 5) -> list[dict]:
-        """long_script_ja あり・note_article 未生成の偉人を返す"""
-        data = self.query_figures({"property": "long_script_ja", "rich_text": {"is_not_empty": True}})
-        figures = [self._page_to_figure(p) for p in data]
-        ready = [
-            f for f in figures
-            if f.get("note_status", "") not in ("article_ready", "posted")
-            and f.get("long_script_ja")
-        ]
-        logger.info(f"note記事生成待ち: {len(ready)} 件")
         return ready[:limit]
 
     def mark_note_posted(self, page_id: str, note_url: str = ""):
@@ -543,14 +436,22 @@ class NotionFigureClient:
         })
         logger.info(f"longform_video_id 保存: page_id={page_id}, video_id={video_id}")
 
-    def save_playlist_id(self, page_id: str, playlist_id: str):
-        """プレイリストIDを Notion に保存する"""
-        self._patch(f"pages/{page_id}", {
-            "properties": {
-                "playlist_id": {"rich_text": [{"text": {"content": playlist_id}}]},
-            }
-        })
-        logger.info(f"playlist_id 保存: page_id={page_id}, playlist_id={playlist_id}")
+    def remove_unused_properties(self):
+        """未使用のプロパティをNotionデータベースから削除する（nullをセットして削除）"""
+        unused = ["script_en", "title_en", "en_video_id", "playlist_id", "note_article"]
+        payload = {"properties": {name: None for name in unused}}
+        try:
+            resp = self.session.patch(
+                f"{NOTION_API_BASE}/databases/{self.database_id}",
+                json=payload,
+                timeout=15,
+            )
+            if resp.ok:
+                logger.info(f"未使用プロパティを削除しました: {unused}")
+            else:
+                logger.warning(f"プロパティ削除に失敗 [{resp.status_code}]: {resp.text[:300]}")
+        except Exception as e:
+            logger.warning(f"プロパティ削除に失敗（無視）: {e}")
 
     # ─────────────────────────────────────────
     # DB 初期セットアップ
@@ -596,11 +497,8 @@ class NotionFigureClient:
                     {"name": "error", "color": "red"},
                 ]}},
                 "script_ja": {"rich_text": {}},
-                "script_en": {"rich_text": {}},
                 "title_ja": {"rich_text": {}},
-                "title_en": {"rich_text": {}},
                 "jp_video_id": {"rich_text": {}},
-                "en_video_id": {"rich_text": {}},
                 "produced_at": {"date": {}},
                 "research_data": {"rich_text": {}},
                 "long_script_ja": {"rich_text": {}},
