@@ -314,15 +314,8 @@ class Pipeline:
                 thumbnail_path=thumb_path,
             )
 
-            # 長編動画リンクをコメントに投稿 & プレイリストに追加（日本語のみ）
+            # プレイリストに追加（日本語のみ）
             if language == "ja" and longform_video_id and video_id:
-                comment_text = (
-                    f"▶ 続きの長編動画はこちら！\n"
-                    f"https://youtu.be/{longform_video_id}\n\n"
-                    f"この動画の続き・詳しい解説は長編動画でご覧いただけます📺"
-                )
-                uploader.post_comment(video_id, comment_text)
-
                 # 長編と同じプレイリストにショートを追加
                 playlist_id = figure.get("playlist_id", "")
                 if playlist_id:
