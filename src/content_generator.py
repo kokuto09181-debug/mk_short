@@ -248,10 +248,10 @@ class ContentGenerator:
 
         longform_block = ""
         if longform_video_id and lang == "ja":
-            longform_block = f"▶ 続きの長編動画はこちら\nhttps://youtu.be/{longform_video_id}\n\n"
+            longform_block = f"\n\n▶ 続きの長編動画はこちら\nhttps://youtu.be/{longform_video_id}"
 
         all_tags = base_tags + (extra_tags or [])
-        return f"{longform_block}{desc}{sources_block}\n\n{' '.join(all_tags)}"
+        return f"{desc}{longform_block}{sources_block}\n\n{' '.join(all_tags)}"
 
 
 if __name__ == "__main__":
