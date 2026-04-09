@@ -34,3 +34,6 @@ tenacity>=8.2.3
 ffmpeg-python>=0.2.0
 
 ollama
+
+# 画像検索フォールバック（duckduckgo_search から改名）
+ddgs>=0.5.0

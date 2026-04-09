@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -482,21 +483,23 @@ class LongformRenderer:
         write_kw = dict(fps=FPS, audio_codec="aac", threads=4, logger=None)
 
         logger.info(f"動画書き出し中... ({total_duration:.1f}秒、{total_duration/60:.1f}分)")
-        if use_gpu:
-            try:
-                final.write_videofile(
-                    nobgm_path, codec="h264_nvenc",
-                    ffmpeg_params=["-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"],
-                    **write_kw,
-                )
-            except Exception as gpu_err:
-                logger.warning(f"h264_nvenc失敗 ({gpu_err.__class__.__name__})、libx264にフォールバック")
-                import shutil
-                if os.path.exists(nobgm_path):
-                    os.remove(nobgm_path)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Error in file.*index.*out of bounds", category=UserWarning)
+            if use_gpu:
+                try:
+                    final.write_videofile(
+                        nobgm_path, codec="h264_nvenc",
+                        ffmpeg_params=["-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"],
+                        **write_kw,
+                    )
+                except Exception as gpu_err:
+                    logger.warning(f"h264_nvenc失敗 ({gpu_err.__class__.__name__})、libx264にフォールバック")
+                    import shutil
+                    if os.path.exists(nobgm_path):
+                        os.remove(nobgm_path)
+                    final.write_videofile(nobgm_path, codec="libx264", preset="fast", **write_kw)
+            else:
                 final.write_videofile(nobgm_path, codec="libx264", preset="fast", **write_kw)
-        else:
-            final.write_videofile(nobgm_path, codec="libx264", preset="fast", **write_kw)
 
         for c in clips:
             c.close()

@@ -72,14 +72,32 @@ video:
       name_color: [220, 170, 255]
 
 tts:
+  # provider: "sbv2" / "openai_tts" / "edge_tts"
+  # SBV2 失敗時は自動で edge_tts にフォールバック
   japanese:
-    provider: "openai_tts"       # OPENAI_API_KEY がなければ edge_tts に自動フォールバック
-    voice: "nova"                # OpenAI voice（多言語対応）
-    openai_model: "tts-1-hd"
+    provider: "irodori"          # Irodori-TTS VoiceDesign（ローカルGPU）
     edge_voice: "ja-JP-NanamiNeural"  # フォールバック用
+    voice: "nova"
+    openai_model: "tts-1-hd"
     speed: 1.05
+    # ── Irodori-TTS 設定 ──
+    irodori_repo: "Aratako/Irodori-TTS-500M-v2-VoiceDesign"
+    irodori_device: "cuda"
+    irodori_precision: "bf16"
+    irodori_codec_repo: "Aratako/Semantic-DACVAE-Japanese-32dim"
+    irodori_steps: 40
+    irodori_cfg_text: 3.0
+    irodori_cfg_caption: 3.0
+    # ── Style-Bert-VITS2 設定（フォールバック用に保持） ──
+    sbv2_model_path: "models/sbv2/jvnv-F2-jp/jvnv-F2_e166_s20000.safetensors"
+    sbv2_config_path: "models/sbv2/jvnv-F2-jp/config.json"
+    sbv2_style_vec_path: "models/sbv2/jvnv-F2-jp/style_vectors.npy"
+    sbv2_device: "cuda:0"
+    sbv2_default_style: "Neutral"
+    sbv2_default_style_weight: 4.0
+    sbv2_length: 1.05
   english:
-    provider: "openai_tts"
+    provider: "edge_tts"         # 英語はedge_tts（SBV2は日本語専用）
     voice: "alloy"
     openai_model: "tts-1-hd"
     edge_voice: "en-US-AriaNeural"
@@ -87,7 +105,9 @@ tts:
 
 bgm:
   enabled: true
-  volume_db: -18.0   # ナレーションより -18dB（聞こえる程度の環境音）
+  volume_db: -22.0   # ナレーションより -22dB（主役を邪魔しない程度）
+  # CC0ライセンス フリー音源（pixabay.com）
+  file_path: "assets/bgm/traditional_japanese.mp3"
 
 images:
   provider: "pexels"
@@ -102,6 +122,11 @@ upload:
   notify_subscribers: true
   schedule_times_jst:
     - "19:00"   # 長編動画の配信スケジュール（JST）
+  short_v2_schedule_times_jst:
+    - "07:00"
+    - "12:00"
+    - "17:00"
+    - "21:00"
 
 ai:
   # backend: "anthropic" または "ollama"
@@ -120,6 +145,12 @@ ai:
   ollama_num_ctx: 8192
   # KVキャッシュ量子化（VRAM節約。Ollamaを再起動後に有効）
   ollama_kv_cache_type: "q4_0"
+
+whisper:
+  model_size: "small"        # tiny / base / small / medium（smallが速度・精度バランス◎）
+  device: "cuda"             # cuda / cpu
+  compute_type: "float16"    # float16 (GPU) / int8 (CPU)
+  language: "ja"
 
 notion:
   # Notion データベース設定（偉人管理）

@@ -295,6 +295,13 @@ class NotionFigureClient:
             "longform_video_id": self._get_prop_text(props, "longform_video_id"),
             "note_status": self._get_prop_select(props, "note_status"),
             "note_url": self._get_prop_text(props, "note_url"),
+            "short_v2_video_path": self._get_prop_text(props, "short_v2_video_path"),
+            "short_v2_youtube_id": self._get_prop_text(props, "short_v2_youtube_id"),
+            "short_v2_pinned_comment": self._get_prop_text(props, "short_v2_pinned_comment"),
+            "short_v2_comment_posted": props.get("short_v2_comment_posted", {}).get("checkbox", False),
+            "short_v2_scheduled_at": (
+                props.get("short_v2_scheduled_at", {}).get("date") or {}
+            ).get("start", ""),
         }
 
     # ─────────────────────────────────────────
@@ -311,7 +318,6 @@ class NotionFigureClient:
                     "long_script_ja": {"rich_text": {}},
                     "longform_status": {"select": {}},
                     "longform_video_id": {"rich_text": {}},
-                    "note_status": {"select": {}},
                     "note_url": {"rich_text": {}},
                 }},
                 timeout=10,
@@ -324,23 +330,29 @@ class NotionFigureClient:
             logger.warning(f"プロパティの追加に失敗（無視）: {e}")
 
     def get_figures_ready_for_note(self, limit: int = 10) -> list[dict]:
-        """note 未投稿かつ長編スクリプトが存在する偉人を返す"""
-        data = self.query_figures({"property": "long_script_ja", "rich_text": {"is_not_empty": True}})
+        """note 未投稿かつ長編スクリプトが存在する偉人を返す（note_url が空 = 未投稿）"""
+        data = self.query_figures({
+            "and": [
+                {"property": "long_script_ja", "rich_text": {"is_not_empty": True}},
+                {"property": "note_url", "rich_text": {"is_empty": True}},
+            ]
+        })
         figures = [self._page_to_figure(p) for p in data]
-        ready = [
-            f for f in figures
-            if f.get("note_status", "") not in ("posted",)
-            and f.get("long_script_ja")
-        ]
-        return ready[:limit]
+        return [f for f in figures if f.get("long_script_ja")][:limit]
 
     def mark_note_posted(self, page_id: str, note_url: str = ""):
         """note 投稿完了をマーク"""
         props: dict = {"note_status": {"select": {"name": "posted"}}}
         if note_url:
             props["note_url"] = {"rich_text": [{"text": {"content": note_url[:2000]}}]}
-        self._patch(f"pages/{page_id}", {"properties": props})
-        logger.info(f"note 投稿済みマーク: page_id={page_id}, url={note_url}")
+        result = self._patch(f"pages/{page_id}", {"properties": props})
+        # 実際に反映されたか確認
+        saved = result.get("properties", {}).get("note_status", {})
+        saved_name = (saved.get("select") or {}).get("name", "")
+        if saved_name == "posted":
+            logger.info(f"note 投稿済みマーク完了: page_id={page_id}")
+        else:
+            logger.error(f"note_status 更新失敗（反映されず）: page_id={page_id}, 実際の値={saved_name!r}")
 
     def save_research_data(self, page_id: str, research_text: str):
         """Wikipedia等から収集した偉人情報をNotionに保存する"""
@@ -435,6 +447,113 @@ class NotionFigureClient:
             }
         })
         logger.info(f"longform_video_id 保存: page_id={page_id}, video_id={video_id}")
+
+    # ─────────────────────────────────────────
+    # ショートv2用メソッド
+    # ─────────────────────────────────────────
+
+    def ensure_short_v2_properties(self):
+        """v2ショート用プロパティが DB になければ追加する"""
+        try:
+            resp = self.session.patch(
+                f"{NOTION_API_BASE}/databases/{self.database_id}",
+                json={"properties": {
+                    "short_v2_video_path": {"rich_text": {}},
+                    "short_v2_produced_at": {"date": {}},
+                    "short_v2_youtube_id": {"rich_text": {}},
+                    "short_v2_scheduled_at": {"date": {}},
+                    "short_v2_pinned_comment": {"rich_text": {}},
+                    "short_v2_comment_posted": {"checkbox": {}},
+                }},
+                timeout=10,
+            )
+            if resp.ok:
+                logger.info("short_v2 プロパティを確認・追加しました")
+            else:
+                logger.warning(f"short_v2 プロパティ追加に失敗 [{resp.status_code}]: {resp.text[:300]}")
+        except Exception as e:
+            logger.warning(f"short_v2 プロパティ追加に失敗（無視）: {e}")
+
+    def get_pending_v2_figures(self, limit: int = 1) -> list[dict]:
+        """v2ショート未生成の偉人を返す（short_v2_video_path が空）"""
+        data = self.query_figures({
+            "and": [
+                {"property": "short_v2_video_path", "rich_text": {"is_empty": True}},
+                {"or": [
+                    {"property": "status", "select": {"equals": "done"}},
+                    {"property": "status", "select": {"equals": "pending"}},
+                ]},
+            ]
+        })
+        figures = [self._page_to_figure(p) for p in data]
+        logger.info(f"v2ショート未生成: {len(figures)} 件")
+        return figures[:limit]
+
+    def mark_v2_done(self, page_id: str, video_path: str):
+        """v2ショート動画の生成完了を記録する"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "short_v2_video_path": {"rich_text": [{"text": {"content": video_path[:2000]}}]},
+                "short_v2_produced_at": {"date": {"start": datetime.now(timezone.utc).isoformat()}},
+            }
+        })
+        logger.info(f"v2完了マーク: page_id={page_id}, path={video_path}")
+
+    def get_pending_v2_uploads(self, limit: int = 50) -> list[dict]:
+        """動画生成済み（short_v2_video_path あり）かつ未アップロード（short_v2_youtube_id 空）の偉人を返す"""
+        data = self.query_figures({
+            "and": [
+                {"property": "short_v2_video_path", "rich_text": {"is_not_empty": True}},
+                {"property": "short_v2_youtube_id", "rich_text": {"is_empty": True}},
+            ]
+        })
+        figures = [self._page_to_figure(p) for p in data]
+        logger.info(f"v2アップロード待ち: {len(figures)} 件")
+        return figures[:limit]
+
+    def mark_v2_uploaded(
+        self,
+        page_id: str,
+        video_id: str,
+        scheduled_at: "datetime",
+        pinned_comment: str = "",
+    ):
+        """v2ショート動画のYouTubeアップロード完了を記録する"""
+        props: dict = {
+            "short_v2_youtube_id": {"rich_text": [{"text": {"content": video_id}}]},
+            "short_v2_scheduled_at": {"date": {"start": scheduled_at.isoformat()}},
+        }
+        if pinned_comment:
+            props["short_v2_pinned_comment"] = {
+                "rich_text": [{"text": {"content": pinned_comment[:2000]}}]
+            }
+            props["short_v2_comment_posted"] = {"checkbox": False}
+        self._patch(f"pages/{page_id}", {"properties": props})
+        logger.info(f"v2アップロード完了マーク: page_id={page_id}, video_id={video_id}")
+
+    def get_pending_comment_figures(self) -> list[dict]:
+        """公開時刻を過ぎたがピン留めコメント未投稿の動画を返す"""
+        now = datetime.now(timezone.utc).isoformat()
+        data = self.query_figures({
+            "and": [
+                {"property": "short_v2_youtube_id", "rich_text": {"is_not_empty": True}},
+                {"property": "short_v2_pinned_comment", "rich_text": {"is_not_empty": True}},
+                {"property": "short_v2_comment_posted", "checkbox": {"equals": False}},
+                {"property": "short_v2_scheduled_at", "date": {"on_or_before": now}},
+            ]
+        })
+        figures = [self._page_to_figure(p) for p in data]
+        logger.info(f"コメント未投稿（公開済み）: {len(figures)} 件")
+        return figures
+
+    def mark_comment_posted(self, page_id: str):
+        """ピン留めコメント投稿完了を記録する"""
+        self._patch(f"pages/{page_id}", {
+            "properties": {
+                "short_v2_comment_posted": {"checkbox": True},
+            }
+        })
+        logger.info(f"コメント投稿完了マーク: page_id={page_id}")
 
     def remove_unused_properties(self):
         """未使用のプロパティをNotionデータベースから削除する（nullをセットして削除）"""

@@ -127,7 +127,7 @@ def post_to_note(
         return ""
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=False)
         context = browser.new_context(
             storage_state=str(SESSION_PATH),
             permissions=["clipboard-read", "clipboard-write"],
@@ -227,11 +227,34 @@ def post_to_note(
                 page.click("button:has-text('投稿する')")
                 logger.info("「投稿する」クリック")
 
+                # 「記事が公開されました」モーダルの×ボタンを閉じる
+                try:
+                    page.wait_for_selector("text=記事が公開されました", timeout=15000)
+                    logger.info("公開完了モーダル表示")
+                    close_btn = page.locator('button').filter(has_text="×").first
+                    if not close_btn.is_visible():
+                        # aria-label やsvgボタンで探す
+                        close_btn = page.locator('[aria-label="閉じる"], [aria-label="close"]').first
+                    close_btn.click()
+                    logger.info("モーダルを閉じました")
+                    page.wait_for_timeout(1000)
+                except PWTimeout:
+                    logger.warning("公開モーダルが見つかりませんでした（スキップ）")
+
                 try:
                     # editor.note.com ではなく note.com 本体のURLになるまで待つ
-                    page.wait_for_url("https://note.com/**", timeout=15000)
+                    page.wait_for_url("https://note.com/**", timeout=10000)
                 except PWTimeout:
                     pass
+
+                # バッジ獲得モーダルなど、note.com ホームで出るポップアップを閉じる
+                try:
+                    page.wait_for_selector("text=おめでとうございます", timeout=2000)
+                    logger.info("バッジモーダル検出 → 閉じます")
+                    page.locator("button").filter(has_text="×").first.click()
+                    page.wait_for_timeout(500)
+                except PWTimeout:
+                    pass  # モーダルなし、正常
             else:
                 page.wait_for_timeout(2000)
 
@@ -258,26 +281,29 @@ def post_to_note(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", default="", help="偉人名を指定（1件のみ）")
-    parser.add_argument("--count", type=int, default=1, help="投稿件数（デフォルト: 1）")
+    parser.add_argument("--count", type=int, default=10, help="投稿件数（デフォルト: 10）")
     parser.add_argument("--draft", action="store_true", help="下書き保存")
     args = parser.parse_args()
 
     notion = NotionFigureClient()
-    candidates = notion.get_figures_ready_for_note(limit=100)
+    candidates = notion.get_figures_ready_for_note(limit=200)
 
     if args.name:
         figures = [f for f in candidates if f.get("name_ja") == args.name]
     else:
-        figures = [f for f in candidates if f.get("longform_video_id")][:args.count]
+        figures = [f for f in candidates if f.get("longform_video_id")]
 
     if not figures:
         print("投稿対象なし（長編動画リンクあり・note未投稿）")
         sys.exit(0)
 
-    logger.info(f"投稿予定: {len(figures)} 件")
-    success, failed = 0, 0
+    logger.info(f"未投稿候補: {len(figures)} 件 / 目標: {args.count} 件")
+    success, skipped = 0, 0
 
     for figure in figures:
+        if success >= args.count:
+            break
+
         name_ja     = figure.get("name_ja", "")
         script_text = figure.get("long_script_ja", "")
         longform_id = figure.get("longform_video_id", "")
@@ -292,6 +318,11 @@ def main():
             hashtags = ["偉人", "日本史", "歴史"]
 
         thumbnail_path = download_youtube_thumbnail(longform_id) if longform_id else ""
+
+        if not thumbnail_path:
+            logger.warning(f"サムネイル取得失敗のためスキップ: {name_ja}")
+            skipped += 1
+            continue
 
         try:
             note_url = post_to_note(
@@ -308,13 +339,16 @@ def main():
 
         if note_url and "note.com" in note_url:
             print(f"[完了] {name_ja} → {note_url}")
-            notion.mark_note_posted(page_id, note_url)
+            try:
+                notion.mark_note_posted(page_id, note_url)
+            except Exception as e:
+                logger.error(f"Notion ステータス更新失敗: {name_ja}: {e}")
             success += 1
         else:
             print(f"[失敗] {name_ja}")
-            failed += 1
+            skipped += 1
 
-    print(f"\n=== 完了: {success} 件成功 / {failed} 件失敗 ===")
+    print(f"\n=== 完了: {success} 件成功 / {skipped} 件スキップ ===")
 
 
 if __name__ == "__main__":

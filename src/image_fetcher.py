@@ -1,6 +1,10 @@
 """
 素材画像取得モジュール
-Wikipedia API（優先）+ Pexels API（補完）から画像を取得する
+
+優先順:
+  1. Wikipedia 日本語版 — pageimages サムネイル + 記事内画像
+  2. Wikipedia 英語版  — 同上（日本語で足りない場合）
+  3. DuckDuckGo 画像検索 — それでも足りない場合の最終手段
 """
 
 import logging
@@ -11,244 +15,392 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-import yaml
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
-CONFIG_DIR = Path(__file__).parent.parent / "config"
-
-PEXELS_API_BASE = "https://api.pexels.com/v1"
 WIKIPEDIA_API_JP = "https://ja.wikipedia.org/w/api.php"
 WIKIPEDIA_API_EN = "https://en.wikipedia.org/w/api.php"
 
-
-def load_config() -> dict:
-    with open(CONFIG_DIR / "settings.yaml", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+# 除外するWikipedia画像のキーワード（ロゴ・アイコン・地図など）
+_BAD_IMAGE_KEYWORDS = (
+    "logo", "icon", "flag", "map", "commons", "wikidata",
+    "blank", "edit", "question", "wikisource", "disambig",
+    "portal", "button", "arrow", "star", "award", "seal",
+    "signature", "coat_of_arms", "symbol", "emblem",
+)
 
 
 class ImageFetcher:
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.environ.get("PEXELS_API_KEY", "")
-        self.config = load_config()
-        self.img_config = self.config["images"]
-        self.session = requests.Session()
-        self.session.headers.update({"Authorization": self.api_key})
-        # Wikipedia用セッション（認証不要）
-        self._wiki_session = requests.Session()
-        self._wiki_session.headers.update({"User-Agent": "mk_short/1.0 (educational)"})
+    def __init__(self):
+        self._session = requests.Session()
+        self._session.headers.update({
+            "User-Agent": "mk_short/1.0 (educational)"
+        })
+
+    # ─────────────────────────────────────────
+    # メインエントリポイント
+    # ─────────────────────────────────────────
+
+    def fetch_images_for_figure(
+        self,
+        name_ja: str,
+        name_en: str,          # 後方互換のため引数は残すが使わない
+        output_dir: str,
+        count: int = 5,
+        search_keywords: Optional[list[str]] = None,
+    ) -> list[str]:
+        """
+        偉人の画像を最大 count 枚取得して保存パスのリストを返す。
+
+        取得順:
+          1. Wikipedia 日本語版（pageimages + 記事内画像）
+          2. DuckDuckGo 画像検索（Wikipedia で足りない場合）
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        paths: list[str] = []
+        seen_urls: set[str] = set()
+
+        # 1. Wikipedia 日本語版
+        if name_ja and len(paths) < count:
+            new = self._fetch_wiki_article_images(
+                WIKIPEDIA_API_JP, name_ja, output_dir,
+                max_count=count - len(paths),
+                start_idx=len(paths),
+                seen_urls=seen_urls,
+            )
+            paths.extend(new)
+            logger.info(f"  Wikipedia: {len(new)}枚")
+
+        # 2. Wikimedia Commons（Wikipedia で足りない場合）
+        if len(paths) < count and name_ja:
+            new = self._fetch_wikimedia_commons(
+                query=name_ja,
+                output_dir=output_dir,
+                max_count=count - len(paths),
+                start_idx=len(paths),
+                seen_urls=seen_urls,
+            )
+            paths.extend(new)
+            if new:
+                logger.info(f"  Wikimedia Commons: {len(new)}枚")
+
+        # 3. DuckDuckGo フォールバック
+        if len(paths) < count:
+            # まず日本語名だけで検索、それでも足りなければ英語キーワードを追加
+            new = self._fetch_duckduckgo(
+                keywords=[name_ja] if name_ja else [],
+                output_dir=output_dir,
+                count=count - len(paths),
+                start_idx=len(paths),
+            )
+            paths.extend(new)
+            if new:
+                logger.info(f"  DuckDuckGo: {len(new)}枚")
+
+        if len(paths) < count and search_keywords:
+            new = self._fetch_duckduckgo(
+                keywords=search_keywords,
+                output_dir=output_dir,
+                count=count - len(paths),
+                start_idx=len(paths),
+            )
+            paths.extend(new)
+            if new:
+                logger.info(f"  DuckDuckGo(EN): {len(new)}枚")
+
+        logger.info(f"  画像取得合計: {len(paths)}枚")
+        return paths
+
+    # 後方互換ラッパー
+    def fetch_wikipedia_images(self, name_ja: str, name_en: str, output_dir: str) -> list[str]:
+        return self.fetch_images_for_figure(name_ja, name_en, output_dir, count=3)
 
     # ─────────────────────────────────────────
     # Wikipedia 画像取得
     # ─────────────────────────────────────────
 
-    def fetch_wikipedia_images(
-        self, name_ja: str, name_en: str, output_dir: str
+    def _fetch_wiki_article_images(
+        self,
+        api_url: str,
+        name: str,
+        output_dir: str,
+        max_count: int,
+        start_idx: int,
+        seen_urls: set[str],
     ) -> list[str]:
-        """Wikipedia APIで偉人の画像を取得する。日英両方を試みる"""
-        os.makedirs(output_dir, exist_ok=True)
-        paths = []
-        seen_urls: set[str] = set()  # 同一URLの重複ダウンロードを防ぐ
+        """
+        Wikipedia 記事から最大 max_count 枚を取得する。
 
-        for api_url, name in [
-            (WIKIPEDIA_API_JP, name_ja),
-            (WIKIPEDIA_API_EN, name_en),
-        ]:
-            if not name:
-                continue
-            try:
-                new_paths = self._fetch_wiki_images_for(
-                    api_url, name, output_dir, len(paths), seen_urls
-                )
-                paths.extend(new_paths)
-                if len(paths) >= 4:
-                    break
-            except Exception as e:
-                logger.warning(f"Wikipedia画像取得失敗 ({name}): {e}")
-
-        logger.info(f"Wikipedia画像: {len(paths)}枚")
-        return paths
-
-    def _fetch_wiki_images_for(
-        self, api_url: str, name: str, output_dir: str, offset: int,
-        seen_urls: set,
-    ) -> list[str]:
-        """指定言語のWikipediaから画像を取得する"""
+        レート制限対策:
+          - APIコールは最大2回（pageimages+images 一括 / imageinfo 一括）
+          - 画像ダウンロード間は 0.5s スリープ
+          - 429 を受けたら即座に中断し DuckDuckGo に委ねる
+          - 連続リクエストを避けるため API 呼び出し間も 0.5s スリープ
+        """
+        # ── Step 1: pageimages + images リストを1回のAPIコールで取得 ──
         params = {
             "action": "query",
             "titles": name,
             "prop": "pageimages|images",
             "pithumbsize": 1200,
-            "imlimit": 10,
+            "imlimit": 20,          # 取りすぎない
             "format": "json",
             "redirects": 1,
         }
-        resp = self._wiki_session.get(api_url, params=params, timeout=15)
-        resp.raise_for_status()
+        try:
+            resp = self._session.get(api_url, params=params, timeout=15)
+            if resp.status_code == 429:
+                logger.warning(f"Wikipedia 429（Step1） → DuckDuckGo にフォールバック")
+                return []
+            resp.raise_for_status()
+        except Exception as e:
+            logger.warning(f"Wikipedia API エラー ({name}): {e}")
+            return []
+
         pages = resp.json().get("query", {}).get("pages", {})
+        if not pages:
+            return []
+        page = next(iter(pages.values()))
+        if str(page.get("pageid", "-1")) == "-1":
+            logger.info(f"  Wikipediaにページなし: {name}")
+            return []
 
-        paths = []
-        for page_id, page in pages.items():
-            if page_id == "-1":
-                continue
+        paths: list[str] = []
 
-            # pageimages のサムネイル（最も関連性が高い画像）
-            thumb = page.get("thumbnail", {})
-            thumb_url = thumb.get("source", "")
-            if thumb_url and thumb_url not in seen_urls:
+        # メインサムネイル（最優先）
+        thumb_url = page.get("thumbnail", {}).get("source", "")
+        if thumb_url and thumb_url not in seen_urls:
+            p = self._download(thumb_url, output_dir, f"wiki_{start_idx:02d}")
+            if p:
                 seen_urls.add(thumb_url)
-                path = self._download_from_url(
-                    thumb_url, output_dir, f"wiki_{offset + len(paths):02d}"
-                )
-                if path:
-                    paths.append(path)
+                paths.append(p)
+            time.sleep(0.5)
 
-            # images リストから人物写真を1枚だけ追加
-            for img_meta in page.get("images", [])[:8]:
-                if len(paths) >= 2:
-                    break
-                title = img_meta.get("title", "")
-                lower = title.lower()
-                if any(x in lower for x in [".svg", "icon", "map", "logo", "flag"]):
-                    continue
-                if not any(lower.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
-                    continue
-                img_url = self._get_wiki_image_url(api_url, title)
-                if img_url and img_url not in seen_urls:
+        if len(paths) >= max_count:
+            return paths
+
+        # 記事内画像リストをフィルタリング
+        img_titles = [
+            img["title"] for img in page.get("images", [])
+            if not self._is_bad_image(img["title"])
+        ]
+        if not img_titles:
+            return paths
+
+        # ── Step 2: imageinfo 一括取得（APIコール1回、最大8件） ──
+        time.sleep(0.5)  # Step1 との間隔を空ける
+        info_params = {
+            "action": "query",
+            "titles": "|".join(img_titles[:8]),
+            "prop": "imageinfo",
+            "iiprop": "url|size",
+            "format": "json",
+        }
+        try:
+            resp2 = self._session.get(api_url, params=info_params, timeout=15)
+            if resp2.status_code == 429:
+                logger.warning("Wikipedia 429（Step2） → 現状の画像で継続")
+                return paths
+            resp2.raise_for_status()
+            info_pages = resp2.json().get("query", {}).get("pages", {})
+        except Exception as e:
+            logger.warning(f"imageinfo 取得失敗 ({name}): {e}")
+            return paths
+
+        for pdata in info_pages.values():
+            if len(paths) >= max_count:
+                break
+            infos = pdata.get("imageinfo", [])
+            if not infos:
+                continue
+            img_url = infos[0].get("url", "")
+            width   = infos[0].get("width", 0)
+            height  = infos[0].get("height", 0)
+            if width < 200 or height < 200:
+                continue
+            if img_url.lower().endswith(".svg"):
+                continue
+            if img_url and img_url not in seen_urls:
+                idx = start_idx + len(paths)
+                p = self._download(img_url, output_dir, f"wiki_{idx:02d}")
+                if p:
                     seen_urls.add(img_url)
-                    path = self._download_from_url(
-                        img_url, output_dir, f"wiki_{offset + len(paths):02d}"
-                    )
-                    if path:
-                        paths.append(path)
+                    paths.append(p)
+                time.sleep(0.5)
 
         return paths
 
-    def _get_wiki_image_url(self, api_url: str, title: str) -> Optional[str]:
-        """WikipediaのファイルタイトルからURLを取得する"""
-        try:
-            params = {
-                "action": "query",
-                "titles": title,
-                "prop": "imageinfo",
-                "iiprop": "url",
-                "format": "json",
-            }
-            resp = self._wiki_session.get(api_url, params=params, timeout=10)
-            resp.raise_for_status()
-            pages = resp.json().get("query", {}).get("pages", {})
-            for page in pages.values():
-                imageinfo = page.get("imageinfo", [])
-                if imageinfo:
-                    return imageinfo[0].get("url")
-        except Exception as e:
-            logger.debug(f"画像URL取得失敗 {title}: {e}")
-        return None
+    def _is_bad_image(self, title: str) -> bool:
+        """ロゴ・アイコン・地図など不要な画像を除外する"""
+        t = title.lower()
+        if t.endswith(".svg"):
+            return True
+        return any(k in t for k in _BAD_IMAGE_KEYWORDS)
 
-    def _download_from_url(
-        self, url: str, output_dir: str, filename: str
-    ) -> Optional[str]:
-        """URLから直接画像をダウンロードして保存パスを返す"""
-        time.sleep(1.0)  # Wikimedia レート制限対策
+    def _download(self, url: str, output_dir: str, filename: str) -> Optional[str]:
+        """画像を1枚ダウンロードして保存パスを返す。失敗時は None"""
         try:
             ext = url.split("?")[0].rsplit(".", 1)[-1].lower()
             if ext not in ("jpg", "jpeg", "png", "webp"):
                 ext = "jpg"
             output_path = os.path.join(output_dir, f"{filename}.{ext}")
-            resp = self._wiki_session.get(url, timeout=30, stream=True)
+            resp = self._session.get(url, timeout=30, stream=True)
             if resp.status_code == 429:
-                wait = int(resp.headers.get("Retry-After", 10))
-                logger.warning(f"Wikipedia rate limit. {wait}秒待機...")
-                time.sleep(wait)
-                resp = self._wiki_session.get(url, timeout=30, stream=True)
+                return None
             resp.raise_for_status()
             with open(output_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=8192):
                     f.write(chunk)
-            logger.info(f"Wikipedia画像保存: {output_path}")
+            logger.info(f"  保存: {Path(output_path).name}")
             return output_path
         except Exception as e:
-            logger.warning(f"ダウンロード失敗 {url[:60]}: {e}")
+            logger.debug(f"  ダウンロード失敗 {url[:60]}: {e}")
             return None
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=8),
-    )
-    def search(self, keywords: list[str], count: int = 5) -> list[dict]:
-        """キーワードで画像を検索し、メタデータリストを返す"""
-        query = " ".join(keywords[:2])  # 最大2キーワード使用
+    # ─────────────────────────────────────────
+    # Wikimedia Commons 画像検索
+    # ─────────────────────────────────────────
+
+    def _fetch_wikimedia_commons(
+        self,
+        query: str,
+        output_dir: str,
+        max_count: int,
+        start_idx: int,
+        seen_urls: set[str],
+    ) -> list[str]:
+        """Wikimedia Commons から画像を検索して取得する（APIコール2回以内）"""
+        COMMONS_API = "https://commons.wikimedia.org/w/api.php"
         params = {
-            "query": query,
-            "orientation": self.img_config.get("orientation", "portrait"),
-            "per_page": self.img_config.get("per_page", 15),
-            "size": "large",
+            "action": "query",
+            "list": "search",
+            "srsearch": f"{query} filetype:bitmap",
+            "srnamespace": 6,   # File: namespace
+            "srlimit": max_count * 3,
+            "format": "json",
         }
+        try:
+            resp = self._session.get(COMMONS_API, params=params, timeout=15)
+            if resp.status_code == 429:
+                return []
+            resp.raise_for_status()
+            items = resp.json().get("query", {}).get("search", [])
+        except Exception as e:
+            logger.debug(f"  Commons 検索失敗: {e}")
+            return []
 
-        logger.info(f"Pexels 検索: query='{query}'")
-        response = self.session.get(f"{PEXELS_API_BASE}/search", params=params, timeout=15)
-        response.raise_for_status()
+        if not items:
+            return []
 
-        photos = response.json().get("photos", [])
-        if not photos:
-            logger.warning(f"画像が見つかりません: {query}。フォールバック検索を実行")
-            return self._fallback_search(count)
+        titles = [item["title"] for item in items[:max_count * 2]]
+        time.sleep(0.5)
 
-        # ランダムにシャッフルして指定枚数返す
-        random.shuffle(photos)
-        selected = photos[:count]
-        logger.info(f"{len(selected)} 枚の画像を取得")
-        return selected
-
-    def _fallback_search(self, count: int) -> list[dict]:
-        """汎用キーワードでフォールバック検索"""
-        fallback_queries = ["Japan", "abstract background", "nature", "city night"]
-        query = random.choice(fallback_queries)
-        params = {
-            "query": query,
-            "orientation": "portrait",
-            "per_page": 15,
+        info_params = {
+            "action": "query",
+            "titles": "|".join(titles[:8]),
+            "prop": "imageinfo",
+            "iiprop": "url|size",
+            "format": "json",
         }
-        response = self.session.get(f"{PEXELS_API_BASE}/search", params=params, timeout=15)
-        response.raise_for_status()
-        photos = response.json().get("photos", [])
-        random.shuffle(photos)
-        return photos[:count]
+        try:
+            resp2 = self._session.get(COMMONS_API, params=info_params, timeout=15)
+            if resp2.status_code == 429:
+                return []
+            resp2.raise_for_status()
+            pages = resp2.json().get("query", {}).get("pages", {})
+        except Exception as e:
+            logger.debug(f"  Commons imageinfo 失敗: {e}")
+            return []
 
-    def download(self, photo: dict, output_dir: str, index: int = 0) -> str:
-        """画像をダウンロードして保存パスを返す"""
-        os.makedirs(output_dir, exist_ok=True)
-        url = photo["src"].get("large2x") or photo["src"]["large"]
-        ext = url.split("?")[0].rsplit(".", 1)[-1] or "jpg"
-        output_path = os.path.join(output_dir, f"bg_{index:02d}.{ext}")
+        paths: list[str] = []
+        for pdata in pages.values():
+            if len(paths) >= max_count:
+                break
+            infos = pdata.get("imageinfo", [])
+            if not infos:
+                continue
+            img_url = infos[0].get("url", "")
+            width   = infos[0].get("width", 0)
+            height  = infos[0].get("height", 0)
+            if width < 200 or height < 200:
+                continue
+            if img_url.lower().endswith(".svg"):
+                continue
+            if self._is_bad_image(pdata.get("title", "")):
+                continue
+            if img_url and img_url not in seen_urls:
+                idx = start_idx + len(paths)
+                p = self._download(img_url, output_dir, f"commons_{idx:02d}")
+                if p:
+                    seen_urls.add(img_url)
+                    paths.append(p)
+                time.sleep(0.5)
 
-        logger.info(f"画像ダウンロード: {url[:60]}...")
-        response = self.session.get(url, timeout=30, stream=True)
-        response.raise_for_status()
-
-        with open(output_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-        logger.info(f"保存: {output_path}")
-        return output_path
-
-    def fetch_images(self, keywords: list[str], output_dir: str, count: int = 5) -> list[str]:
-        """検索 + ダウンロードをまとめて実行。保存パスのリストを返す"""
-        photos = self.search(keywords, count)
-        paths = []
-        for i, photo in enumerate(photos):
-            try:
-                path = self.download(photo, output_dir, index=i)
-                paths.append(path)
-            except Exception as e:
-                logger.warning(f"画像 {i} のダウンロード失敗: {e}")
         return paths
 
+    # ─────────────────────────────────────────
+    # DuckDuckGo 画像検索フォールバック
+    # ─────────────────────────────────────────
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    fetcher = ImageFetcher()
-    paths = fetcher.fetch_images(["Japan nature", "forest"], "/tmp/img_test", count=3)
-    print("取得画像:", paths)
+    def _fetch_duckduckgo(
+        self,
+        keywords: list[str],
+        output_dir: str,
+        count: int,
+        start_idx: int,
+    ) -> list[str]:
+        """DuckDuckGo 画像検索で補完する（duckduckgo-search パッケージ必要）"""
+        # ddgs（旧 duckduckgo_search）を試みる
+        DDGS = None
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            try:
+                from duckduckgo_search import DDGS
+            except ImportError:
+                logger.warning("ddgs 未インストール → pip install ddgs")
+                return []
+
+        query = " ".join(k for k in keywords if k)
+        if not query:
+            return []
+
+        logger.info(f"  DuckDuckGo 画像検索: '{query}'")
+        paths: list[str] = []
+
+        try:
+            # フィルターなし（size/type フィルターが 403 の原因になるため）
+            results = list(DDGS().images(
+                query,
+                max_results=count * 3,
+            ))
+            random.shuffle(results)
+
+            for result in results:
+                if len(paths) >= count:
+                    break
+                url = result.get("image", "")
+                if not url:
+                    continue
+                ext = url.split("?")[0].rsplit(".", 1)[-1].lower()
+                if ext not in ("jpg", "jpeg", "png", "webp"):
+                    ext = "jpg"
+                idx = start_idx + len(paths)
+                output_path = os.path.join(output_dir, f"search_{idx:02d}.{ext}")
+                try:
+                    r = requests.get(
+                        url, timeout=10, stream=True,
+                        headers={"User-Agent": "Mozilla/5.0"},
+                    )
+                    if r.status_code == 200:
+                        with open(output_path, "wb") as f:
+                            for chunk in r.iter_content(8192):
+                                f.write(chunk)
+                        paths.append(output_path)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logger.warning(f"DuckDuckGo 検索失敗: {e}")
+
+        return paths

@@ -25,14 +25,27 @@ def load_config() -> dict:
 
 
 class TTSGenerator:
-    def __init__(self):
+    def __init__(self, language: str = "ja"):
         self.config = load_config()
-        self.tts_config = self.config["tts"]
+        lang_key = "japanese" if language == "ja" else "english"
+        self.tts_config = self.config["tts"].get(lang_key, {})
         self.provider = self.tts_config.get("provider", "edge_tts")
 
-    def generate(self, text: str, output_path: str) -> str:
+    def generate(self, text: str, output_path: str, style: str = "", style_weight: float = 0.0) -> str:
         """テキストを音声ファイル（mp3）に変換する。output_path を返す"""
-        if self.provider == "openai_tts":
+        if self.provider == "irodori":
+            try:
+                return self._generate_irodori(text, output_path, emotion=style)
+            except Exception as e:
+                logger.warning(f"Irodori-TTS 失敗。edge-tts にフォールバック: {e}")
+                return self._generate_edge_tts(text, output_path)
+        elif self.provider == "sbv2":
+            try:
+                return self._generate_sbv2(text, output_path, style=style, style_weight=style_weight)
+            except Exception as e:
+                logger.warning(f"Style-Bert-VITS2 失敗。edge-tts にフォールバック: {e}")
+                return self._generate_edge_tts(text, output_path)
+        elif self.provider == "openai_tts":
             if os.environ.get("OPENAI_API_KEY"):
                 try:
                     return self._generate_openai_tts(text, output_path)
@@ -42,6 +55,121 @@ class TTSGenerator:
         elif self.provider == "edge_tts":
             return self._generate_edge_tts(text, output_path)
         return self._generate_gtts(text, output_path)
+
+    # 統一ナレーションキャプション（情熱ナレーター）
+    _IRODORI_CAPTION_UNIFIED = "視聴者を引き込む情感のある、少し力強い女性の声で読んでください。"
+
+    # 感情スタイル → Irodori-TTS VoiceDesign キャプション対応表（全感情を統一）
+    _IRODORI_CAPTIONS = {
+        "Surprise": _IRODORI_CAPTION_UNIFIED,
+        "Happy":    _IRODORI_CAPTION_UNIFIED,
+        "Sad":      _IRODORI_CAPTION_UNIFIED,
+        "Angry":    _IRODORI_CAPTION_UNIFIED,
+        "Neutral":  _IRODORI_CAPTION_UNIFIED,
+    }
+
+    def _generate_irodori(self, text: str, output_path: str, emotion: str = "Neutral") -> str:
+        """Irodori-TTS VoiceDesign でローカル音声生成（感情キャプション対応）"""
+        import sys
+        sys.path.insert(0, str(CONFIG_DIR.parent / "Irodori-TTS"))
+        from irodori_tts.inference_runtime import InferenceRuntime, RuntimeKey, SamplingRequest, save_wav
+        from huggingface_hub import hf_hub_download
+        import tempfile
+
+        cfg = self.tts_config
+
+        if not hasattr(self, "_irodori_runtime"):
+            model_path = cfg.get("irodori_model_path", "")
+            if model_path:
+                checkpoint = str(CONFIG_DIR.parent / model_path)
+            else:
+                # HuggingFaceから自動ダウンロード
+                checkpoint = hf_hub_download(
+                    repo_id=cfg.get("irodori_repo", "Aratako/Irodori-TTS-500M-v2-VoiceDesign"),
+                    filename="model.safetensors",
+                )
+            key = RuntimeKey(
+                checkpoint=checkpoint,
+                model_device=cfg.get("irodori_device", "cuda"),
+                codec_repo=cfg.get("irodori_codec_repo", "Aratako/Semantic-DACVAE-Japanese-32dim"),
+                model_precision=cfg.get("irodori_precision", "bf16"),
+                codec_device=cfg.get("irodori_device", "cuda"),
+                codec_precision="fp32",
+            )
+            self._irodori_runtime = InferenceRuntime.from_key(key)
+            logger.info(f"Irodori-TTS ロード完了: {cfg.get('irodori_repo', 'VoiceDesign')}")
+
+        caption = self._IRODORI_CAPTIONS.get(emotion, self._IRODORI_CAPTIONS["Neutral"])
+        seed = cfg.get("irodori_seed", 42)
+        logger.info(f"Irodori-TTS 生成: emotion={emotion}, seed={seed}, {len(text)}文字")
+
+        result = self._irodori_runtime.synthesize(
+            SamplingRequest(
+                text=text,
+                caption=caption,
+                no_ref=True,
+                num_steps=cfg.get("irodori_steps", 40),
+                cfg_scale_text=cfg.get("irodori_cfg_text", 3.0),
+                cfg_scale_caption=cfg.get("irodori_cfg_caption", 3.0),
+                seed=seed,
+            )
+        )
+
+        # WAV→MP3変換
+        wav_tmp = tempfile.mktemp(suffix=".wav")
+        save_wav(wav_tmp, result.audio, result.sample_rate)
+        from pydub import AudioSegment as AS
+        seg = AS.from_wav(wav_tmp)
+        seg.export(output_path, format="mp3")
+        os.unlink(wav_tmp)
+
+        logger.info(f"Irodori-TTS 保存: {output_path}")
+        return output_path
+
+    def _generate_sbv2(self, text: str, output_path: str, style: str = "", style_weight: float = 0.0) -> str:
+        """Style-Bert-VITS2 でローカル音声生成（感情スタイル対応）"""
+        from style_bert_vits2.tts_model import TTSModel
+
+        cfg = self.tts_config
+        sbv2_style = style or cfg.get("sbv2_default_style", "Neutral")
+        sbv2_weight = style_weight or cfg.get("sbv2_default_style_weight", 4.0)
+
+        # TTS モデルは初回のみロード（以降キャッシュ）
+        if not hasattr(self, "_sbv2_model"):
+            # パスはプロジェクトルートからの相対パスとして解決
+            project_root = CONFIG_DIR.parent
+            model_path = project_root / cfg["sbv2_model_path"]
+            config_path = project_root / cfg["sbv2_config_path"]
+            style_vec_path = project_root / cfg["sbv2_style_vec_path"]
+            self._sbv2_model = TTSModel(
+                model_path=model_path,
+                config_path=config_path,
+                style_vec_path=style_vec_path,
+                device=cfg.get("sbv2_device", "cuda:0"),
+            )
+            logger.info(f"Style-Bert-VITS2 モデルロード完了: {cfg['sbv2_model_path']}")
+
+        logger.info(f"SBV2 音声生成: style={sbv2_style}, weight={sbv2_weight}, {len(text)} 文字")
+
+        sr, audio = self._sbv2_model.infer(
+            text=text,
+            style=sbv2_style,
+            style_weight=sbv2_weight,
+            length=cfg.get("sbv2_length", 1.05),
+        )
+
+        # WAV → MP3 変換
+        import soundfile as sf
+        import tempfile
+        wav_tmp = tempfile.mktemp(suffix=".wav")
+        sf.write(wav_tmp, audio, sr)
+        from pydub import AudioSegment as AS
+        seg = AS.from_wav(wav_tmp)
+        seg.export(output_path, format="mp3")
+        os.unlink(wav_tmp)
+
+        logger.info(f"SBV2 音声保存: {output_path}")
+        return output_path
 
     def _generate_gtts(self, text: str, output_path: str) -> str:
         from gtts import gTTS
@@ -140,17 +268,33 @@ class TTSGenerator:
         return mono.set_channels(2)
 
     def mix_with_bgm(self, voice_path: str, output_path: str) -> str:
-        """ナレーション音声に和風アンビエントBGMを混合する"""
+        """ナレーション音声にBGMを混合する（ファイル優先、なければアルゴリズム生成）"""
         bgm_config = self.config.get("bgm", {})
         volume_db = bgm_config.get("volume_db", -18.0)
 
         voice = AudioSegment.from_file(voice_path)
-        duration_sec = len(voice) / 1000.0 + 2.0  # 余裕を持って生成
 
-        bgm = self._generate_ambient_bgm(duration_sec)
-        bgm = bgm[: len(voice)]  # 長さをナレーションに合わせる
+        # BGMファイルが指定されていればファイルから読み込む
+        bgm_file = bgm_config.get("file_path", "")
+        if bgm_file:
+            bgm_path = CONFIG_DIR.parent / bgm_file
+            if bgm_path.exists():
+                bgm = AudioSegment.from_file(str(bgm_path))
+                # 音声より短い場合はループ
+                while len(bgm) < len(voice):
+                    bgm = bgm + bgm
+                bgm = bgm[: len(voice)]
+                logger.info(f"BGM ファイル使用: {bgm_path.name}")
+            else:
+                logger.warning(f"BGMファイル未検出: {bgm_path}、アルゴリズム生成に切替")
+                bgm = self._generate_ambient_bgm(len(voice) / 1000.0 + 2.0)
+                bgm = bgm[: len(voice)]
+        else:
+            duration_sec = len(voice) / 1000.0 + 2.0
+            bgm = self._generate_ambient_bgm(duration_sec)
+            bgm = bgm[: len(voice)]
+
         bgm = bgm + volume_db   # 音量を下げる（ナレーションを主役に）
-
         mixed = voice.overlay(bgm, position=0)
         mixed.export(output_path, format="mp3")
         logger.info(f"BGM 混合完了 ({volume_db:+.0f}dB): {output_path}")

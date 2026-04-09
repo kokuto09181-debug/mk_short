@@ -42,12 +42,13 @@ class ContentGenerator:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
     )
-    def generate_script(self, figure: dict, language: str = "ja") -> dict:
+    def generate_script(self, figure: dict, language: str = "ja", prompt_key: str = "") -> dict:
         """
         偉人データから動画脚本を生成する。
         language: "ja" or "en"
+        prompt_key: カスタムプロンプトキー（例: "script_ja_v2"）。省略時は "script_{language}"
         """
-        prompt_key = f"script_{language}"
+        prompt_key = prompt_key or f"script_{language}"
         prompt_template = self.prompts[prompt_key]
 
         user_message = prompt_template["user"].format(
@@ -202,6 +203,54 @@ class ContentGenerator:
         figures = json.loads(raw_text)
         logger.info(f"新規偉人候補: {len(figures)} 件")
         return figures
+
+    def generate_image_prompt(
+        self,
+        figure: dict,
+        section_text: str,
+        style: str = "ukiyo-e",
+    ) -> str:
+        """
+        偉人の情報とシーン内容からComfyUI用の英語画像プロンプトを生成する。
+        偉人ごとに異なるビジュアル要素（職業・時代・場面）を含む。
+        """
+        name_ja = figure.get("name_ja", "")
+        name_en = figure.get("name_en", "")
+        era = figure.get("era", "")
+        field = figure.get("field", "")
+        notes = figure.get("notes", "")
+
+        system_prompt = (
+            "You are an art director for ukiyo-e style illustrations. "
+            "Generate a concise English image prompt (max 80 words) for a woodblock print. "
+            "Focus on visual elements: scene, composition, lighting, colors, emotions. "
+            "Include the person's occupation and distinctive visual traits. "
+            "Do NOT include any text, captions, or watermarks in the prompt. "
+            "Output only the prompt, no explanations."
+        )
+        user_prompt = (
+            f"Person: {name_ja} ({name_en})\n"
+            f"Era: {era} period Japan\n"
+            f"Occupation/Field: {field}\n"
+            f"Known for: {notes}\n"
+            f"Scene to illustrate: {section_text}\n\n"
+            f"Generate an ukiyo-e woodblock print prompt for this specific scene."
+        )
+
+        try:
+            resp = self.client.chat(
+                messages=[{"role": "user", "content": user_prompt}],
+                system=system_prompt,
+                temperature=0.8,
+                max_tokens=150,
+            )
+            return resp.strip()
+        except Exception:
+            # フォールバック: シンプルなテンプレート
+            return (
+                f"ukiyo-e style woodblock print, {name_en}, {era} period Japan, "
+                f"{field}, {section_text[:60]}, bold outlines, flat colors, masterpiece"
+            )
 
     def build_narration(self, script: dict) -> str:
         """脚本からTTS読み上げ用の連続テキストを組み立てる"""

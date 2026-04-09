@@ -265,17 +265,6 @@ def run(limit: int = 3, name: str = "", mode: str = "slot", fixed_time: Optional
                 f" 配信予定: {publish_at.astimezone(JST).strftime('%Y-%m-%d %H:%M JST')}"
             )
 
-            # プレイリスト作成（または既存取得）→ 長編を追加 → Notion に保存
-            try:
-                playlist_title = f"{name_ja} - 完全解説シリーズ"
-                playlist_desc = f"{name_ja}の長編解説動画と関連ショート動画をまとめたプレイリストです。"
-                playlist_id = uploader.create_or_get_playlist(playlist_title, playlist_desc)
-                if playlist_id:
-                    uploader.add_to_playlist(playlist_id, video_id)
-                    notion.save_playlist_id(page_id, playlist_id)
-            except Exception as pe:
-                logger.warning(f"プレイリスト処理失敗（スキップ）: {pe}")
-
         except Exception as e:
             logger.error(f"アップロード失敗: {name_ja}: {e}")
             # uploading → render_done に戻して次回再試行できるようにする（render_error にしない）
