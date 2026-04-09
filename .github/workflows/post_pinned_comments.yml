@@ -1,0 +1,49 @@
+name: Post Pinned Comments (v2 Shorts)
+
+on:
+  # スケジュール公開の3分後に実行（UTC = JST-9）
+  schedule:
+    - cron: "3 22 * * *"   # JST 07:03
+    - cron: "3 3 * * *"    # JST 12:03
+    - cron: "3 8 * * *"    # JST 17:03
+    - cron: "3 12 * * *"   # JST 21:03
+
+  # 手動トリガー（テスト・リカバリ用）
+  workflow_dispatch:
+
+env:
+  PYTHONUNBUFFERED: "1"
+  TZ: "Asia/Tokyo"
+
+jobs:
+  post-comments:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install \
+            requests \
+            google-api-python-client \
+            google-auth-httplib2 \
+            google-auth-oauthlib \
+            PyYAML \
+            python-dotenv \
+            tenacity
+
+      - name: Post pinned comments
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          YOUTUBE_TOKEN_JSON_JP: ${{ secrets.YOUTUBE_TOKEN_JSON_JP }}
+        run: python scripts/upload_short_v2.py --post-comments
