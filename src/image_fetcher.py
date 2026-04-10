@@ -115,6 +115,16 @@ class ImageFetcher:
     def fetch_wikipedia_images(self, name_ja: str, name_en: str, output_dir: str) -> list[str]:
         return self.fetch_images_for_figure(name_ja, name_en, output_dir, count=3)
 
+    def fetch_images(self, keywords: list[str], output_dir: str, count: int = 3) -> list[str]:
+        """v1 pipeline.py 後方互換。キーワードで DuckDuckGo 検索して補完する"""
+        os.makedirs(output_dir, exist_ok=True)
+        return self._fetch_duckduckgo(
+            keywords=keywords,
+            output_dir=output_dir,
+            count=count,
+            start_idx=len(os.listdir(output_dir)),
+        )
+
     # ─────────────────────────────────────────
     # Wikipedia 画像取得
     # ─────────────────────────────────────────
