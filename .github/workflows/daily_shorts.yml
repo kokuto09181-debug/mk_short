@@ -1,11 +1,11 @@
 name: Daily Shorts Generation
 
 on:
-  # 毎日3回投稿（UTC = JST-9）
-  schedule:
-    - cron: "0 22 * * *"   # JST 07:00
-    - cron: "0 3 * * *"    # JST 12:00
-    - cron: "0 11 * * *"   # JST 20:00
+  # 毎日3回投稿（UTC = JST-9）※一時停止中
+  # schedule:
+  #   - cron: "0 22 * * *"   # JST 07:00
+  #   - cron: "0 3 * * *"    # JST 12:00
+  #   - cron: "0 11 * * *"   # JST 20:00
 
   # 手動トリガー（テスト用）
   workflow_dispatch:
